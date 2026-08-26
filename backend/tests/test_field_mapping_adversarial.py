@@ -1,13 +1,9 @@
-"""
-Adversarial tests — Field Mapping Aug 26 hardening pass (MRP + Net Quantity)
-Hard multi-field, multi-candidate, mixed-signal strings that stress the
-boundary-aware label->value association and negative-context suppression.
-
-Run: python3 test_field_mapping_adversarial.py
-"""
-
 import sys
-from field_mapping import resolve_mrp, resolve_net_quantity, map_fields
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.field_mapping import resolve_mrp, resolve_net_quantity, map_fields
 
 PASS = 0
 FAIL = 0
