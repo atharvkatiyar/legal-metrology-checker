@@ -209,8 +209,8 @@ def _normalize_unit(u: str) -> str:
 _INTEGER_STRICT_RE = re.compile(
     r"^(?:"
     r"\d{1,3}(?:,\d{3})+"          # international: 1,234 / 1,234,567
-    r"|\d{1,2}(?:,\d{2})+,\d{3}"   # Indian: 1,23,456 / 12,34,567 / 1,23,45,678
-    r"|\d+"                            # plain digit run, no commas
+    r"|\d{1,3}(?:,\d{2})+,\d{3}"   # Indian: 1,23,456 / 12,34,567 / 123,45,678
+    r"|\d+"                        # plain digit run, no commas
     r")$"
 )
 
