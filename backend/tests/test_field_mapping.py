@@ -182,9 +182,26 @@ check("MRP international-style all-3-digit grouping supported", r.value == 12345
 r = resolve_mrp("MRP ₹1,23,456")
 check("MRP Indian lakh-style grouping supported", r.value == 123456.0, f"got {r.value}")
 
+r = resolve_mrp("MRP ₹123,45,678")
+check(
+    "MRP Indian-style 3-digit leading group supported",
+    r.value == 12345678.0,
+    f"got {r.value}"
+)
+
+r = resolve_mrp("MRP ₹1,23,45,678")
+check(
+    "MRP Indian-style long grouping supported",
+    r.value == 12345678.0,
+    f"got {r.value}"
+)
+
 r = resolve_mrp("MRP ₹1,23,45")
-check("MRP malformed comma grouping rejected outright, not truncated to 12345",
-      r.value is None, f"got {r.value}")
+check(
+    "MRP malformed comma grouping rejected outright, not truncated to 12345",
+    r.value is None,
+    f"got {r.value}"
+)
 
 r = resolve_mrp("MRP ₹123,45")
 check("MRP malformed 2-digit trailing group rejected", r.value is None, f"got {r.value}")
@@ -464,6 +481,27 @@ check("Net Qty malformed 4-digit leading group rejected", r.value is None, f"got
 r = resolve_net_quantity("Net Qty 1,00,000 g")
 check("Net Qty Indian 1,00,000 (leading zero group) valid",
       r.value == {"amount": 100000.0, "unit": "g"}, f"got {r.value}")
+
+r = resolve_net_quantity("Net Qty 12,34,567 g")
+check(
+    "Net Qty Indian-style multi-comma grouping supported",
+    r.value == {"amount": 1234567.0, "unit": "g"},
+    f"got {r.value}"
+)
+
+r = resolve_net_quantity("Net Qty 123,45,678 g")
+check(
+    "Net Qty Indian-style 3-digit leading group supported",
+    r.value == {"amount": 12345678.0, "unit": "g"},
+    f"got {r.value}"
+)
+
+r = resolve_net_quantity("Net Qty 1,23,45 g")
+check(
+    "Net Qty malformed comma grouping rejected outright, not truncated to 12345",
+    r.value is None,
+    f"got {r.value}"
+)
 
 # ===========================================================================
 # Net Quantity — sanity checks (zero / malformed)
