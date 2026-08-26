@@ -244,7 +244,11 @@ check("Case16a: malformed MRP suffix rejected", r.value is None, f"got {r.value}
 r = resolve_net_quantity("MRP ₹249 | Net Qty 1.2.3 g")
 check("Case16b: malformed quantity decimal rejected without partial match", r.value is None, f"got {r.value}")
 r = resolve_net_quantity("MRP ₹249 | Net Qty 123,45,678 g")
-check("Case16c: malformed mixed grouping rejected", r.value is None, f"got {r.value}")
+check(
+    "Case16c: valid Indian grouping with 3-digit leading group resolves",
+    r.value == {"amount": 12345678.0, "unit": "g"},
+    f"got {r.value}"
+)
 r = resolve_net_quantity("MRP ₹249 | Net Qty 1,23,45,678 g")
 check("Case16d: valid long Indian grouping resolves", r.value == {"amount": 12345678.0, "unit": "g"}, f"got {r.value}")
 
