@@ -1,5 +1,10 @@
 import sys
-from field_mapping import resolve_mrp, resolve_net_quantity, map_fields
+from pathlib import Path
+
+# Add the backend directory to Python's import path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.field_mapping import resolve_mrp, resolve_net_quantity, map_fields
 
 PASS = 0
 FAIL = 0
