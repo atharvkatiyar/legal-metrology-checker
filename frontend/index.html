@@ -1,16 +1,16 @@
-<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Legal Metrology Compliance Checker</title>
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
   * {
     box-sizing: border-box;
   }
-
+  
   body {
     margin: 0;
     padding: 40px 20px;
@@ -20,7 +20,7 @@
     display: flex;
     justify-content: center;
   }
-
+  
   .container {
     width: 100%;
     max-width: 860px;
@@ -29,19 +29,19 @@
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
     padding: 32px;
   }
-
+  
   h1 {
     font-size: 24px;
     margin: 0 0 6px 0;
     font-weight: 700;
   }
-
+  
   .subtitle {
     color: #6b7280;
     font-size: 14px;
     margin-bottom: 28px;
   }
-
+  
   .upload-panel {
     display: flex;
     flex-direction: column;
@@ -52,18 +52,18 @@
     border-radius: 12px;
     margin-bottom: 24px;
   }
-
+  
   .file-input-wrapper {
     display: flex;
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
   }
-
+  
   input[type="file"] {
     display: none;
   }
-
+  
   .file-label {
     display: inline-flex;
     align-items: center;
@@ -78,12 +78,12 @@
     color: #374151;
     transition: background 0.15s ease, border-color 0.15s ease;
   }
-
+  
   .file-label:hover {
     background: #f3f4f6;
     border-color: #9ca3af;
   }
-
+  
   .file-name {
     font-size: 13px;
     color: #6b7280;
@@ -92,7 +92,7 @@
     white-space: nowrap;
     max-width: 260px;
   }
-
+  
   .scan-btn {
     align-self: flex-start;
     padding: 12px 28px;
@@ -105,17 +105,17 @@
     cursor: pointer;
     transition: background 0.15s ease, opacity 0.15s ease;
   }
-
+  
   .scan-btn:hover:not(:disabled) {
     background: #1d4ed8;
   }
-
+  
   .scan-btn:disabled {
     background: #93c5fd;
     cursor: not-allowed;
     opacity: 0.85;
   }
-
+  
   .error-box {
     display: none;
     padding: 14px 16px;
@@ -126,25 +126,25 @@
     font-size: 14px;
     margin-bottom: 24px;
   }
-
+  
   .canvas-wrapper {
     display: none;
     width: 100%;
     text-align: center;
     margin-bottom: 24px;
   }
-
+  
   canvas {
     max-width: 100%;
     height: auto;
     border-radius: 10px;
     box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
   }
-
+  
   .report {
     display: none;
   }
-
+  
   .status-header {
     display: flex;
     align-items: center;
@@ -153,44 +153,44 @@
     border-radius: 12px;
     margin-bottom: 20px;
   }
-
+  
   .status-header.pass {
     background: #ecfdf5;
     border: 1px solid #a7f3d0;
   }
-
+  
   .status-header.fail {
     background: #fef2f2;
     border: 1px solid #fecaca;
   }
-
+  
   .status-text {
     font-size: 22px;
     font-weight: 800;
     letter-spacing: -0.02em;
   }
-
+  
   .status-header.pass .status-text {
     color: #047857;
   }
-
+  
   .status-header.fail .status-text {
     color: #b91c1c;
   }
-
+  
   .score-text {
     font-size: 16px;
     font-weight: 600;
     color: #374151;
   }
-
+  
   .violations-title {
     font-size: 15px;
     font-weight: 700;
     color: #374151;
     margin: 0 0 12px 0;
   }
-
+  
   ul.violations-list {
     list-style: none;
     margin: 0;
@@ -199,14 +199,14 @@
     flex-direction: column;
     gap: 10px;
   }
-
+  
   ul.violations-list li {
     padding: 14px 16px;
     background: #fef2f2;
     border-left: 4px solid #dc2626;
     border-radius: 6px;
   }
-
+  
   .violation-field {
     font-weight: 700;
     color: #b91c1c;
@@ -215,12 +215,12 @@
     letter-spacing: 0.04em;
     margin-bottom: 4px;
   }
-
+  
   .violation-issue {
     color: #dc2626;
     font-size: 14px;
   }
-
+  
   .no-violations {
     color: #047857;
     font-size: 14px;
@@ -229,26 +229,26 @@
 </style>
 </head>
 <body>
-
 <div class="container">
   <h1>Legal Metrology Compliance Checker</h1>
   <p class="subtitle">Upload a product label image to check compliance against legal metrology rules.</p>
-
+  
   <div class="upload-panel">
     <div class="file-input-wrapper">
       <label class="file-label" for="fileInput">Choose Image</label>
-      <input type="file" id="fileInput" accept="image/*">
+      <input type="file" id="fileInput" accept="image/*" capture="environment">
       <span class="file-name" id="fileName">No file selected</span>
     </div>
     <button class="scan-btn" id="scanBtn" disabled>Scan Label</button>
+    <button class="scan-btn" id="exportPdfBtn" style="background: #059669; margin-top: 10px; display: none;">Export Report as PDF</button>
   </div>
-
+  
   <div class="error-box" id="errorBox"></div>
-
+  
   <div class="canvas-wrapper" id="canvasWrapper">
     <canvas id="imageCanvas"></canvas>
   </div>
-
+  
   <div class="report" id="report">
     <div class="status-header" id="statusHeader">
       <span class="status-text" id="statusText"></span>
@@ -262,7 +262,7 @@
 </div>
 
 <script>
-  const API_URL = "http://127.0.0.1:8000/api/v1/scans/init";
+  const API_URL = "/api/v1/scans/init";
 
   const fileInput = document.getElementById("fileInput");
   const fileNameLabel = document.getElementById("fileName");
@@ -287,6 +287,7 @@
     canvasWrapper.style.display = "none";
     report.style.display = "none";
     violationsList.innerHTML = "";
+    document.getElementById("exportPdfBtn").style.display = "none";
   }
 
   function showError(message) {
@@ -357,7 +358,7 @@
 
         img.src = objectUrl;
     });
-}
+  }
 
   function drawViolationBoxes(ctx, violations, scaleX, scaleY) {
     ctx.lineWidth = 3;
@@ -422,6 +423,7 @@
     }
 
     report.style.display = "block";
+    document.getElementById("exportPdfBtn").style.display = "block";
   }
 
   scanBtn.addEventListener("click", async () => {
@@ -463,7 +465,7 @@
             detail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
           }
         } catch (parseErr) {
-          // ignore parse failure, use default detail
+          // ignore parse failure
         }
         throw new Error(detail);
       }
@@ -490,7 +492,16 @@
       scanBtn.textContent = originalBtnText;
     }
   });
-</script>
 
+  document.getElementById("exportPdfBtn").addEventListener("click", () => { 
+    html2pdf().set({ 
+      margin: 0.5, 
+      filename: 'legal-metrology-report.pdf', 
+      image: { type: 'jpeg', quality: 0.98 }, 
+      html2canvas: { scale: 2 }, 
+      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } 
+    }).from(document.querySelector(".container")).save(); 
+  });
+</script>
 </body>
 </html>
