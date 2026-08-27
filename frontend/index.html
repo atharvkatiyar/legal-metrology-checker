@@ -1,0 +1,496 @@
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legal Metrology Compliance Checker</title>
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 40px 20px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f4f5f7;
+    color: #1a1a1a;
+    display: flex;
+    justify-content: center;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 860px;
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 24px;
+    margin: 0 0 6px 0;
+    font-weight: 700;
+  }
+
+  .subtitle {
+    color: #6b7280;
+    font-size: 14px;
+    margin-bottom: 28px;
+  }
+
+  .upload-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 24px;
+    background: #fafafa;
+    border: 1.5px dashed #d1d5db;
+    border-radius: 12px;
+    margin-bottom: 24px;
+  }
+
+  .file-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  input[type="file"] {
+    display: none;
+  }
+
+  .file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: #374151;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .file-label:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+  }
+
+  .file-name {
+    font-size: 13px;
+    color: #6b7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 260px;
+  }
+
+  .scan-btn {
+    align-self: flex-start;
+    padding: 12px 28px;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+
+  .scan-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+
+  .scan-btn:disabled {
+    background: #93c5fd;
+    cursor: not-allowed;
+    opacity: 0.85;
+  }
+
+  .error-box {
+    display: none;
+    padding: 14px 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  .canvas-wrapper {
+    display: none;
+    width: 100%;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  canvas {
+    max-width: 100%;
+    height: auto;
+    border-radius: 10px;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  }
+
+  .report {
+    display: none;
+  }
+
+  .status-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+  }
+
+  .status-header.pass {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+  }
+
+  .status-header.fail {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+  }
+
+  .status-text {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .status-header.pass .status-text {
+    color: #047857;
+  }
+
+  .status-header.fail .status-text {
+    color: #b91c1c;
+  }
+
+  .score-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  .violations-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #374151;
+    margin: 0 0 12px 0;
+  }
+
+  ul.violations-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  ul.violations-list li {
+    padding: 14px 16px;
+    background: #fef2f2;
+    border-left: 4px solid #dc2626;
+    border-radius: 6px;
+  }
+
+  .violation-field {
+    font-weight: 700;
+    color: #b91c1c;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  .violation-issue {
+    color: #dc2626;
+    font-size: 14px;
+  }
+
+  .no-violations {
+    color: #047857;
+    font-size: 14px;
+    padding: 8px 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Legal Metrology Compliance Checker</h1>
+  <p class="subtitle">Upload a product label image to check compliance against legal metrology rules.</p>
+
+  <div class="upload-panel">
+    <div class="file-input-wrapper">
+      <label class="file-label" for="fileInput">Choose Image</label>
+      <input type="file" id="fileInput" accept="image/*">
+      <span class="file-name" id="fileName">No file selected</span>
+    </div>
+    <button class="scan-btn" id="scanBtn" disabled>Scan Label</button>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+
+  <div class="canvas-wrapper" id="canvasWrapper">
+    <canvas id="imageCanvas"></canvas>
+  </div>
+
+  <div class="report" id="report">
+    <div class="status-header" id="statusHeader">
+      <span class="status-text" id="statusText"></span>
+      <span class="score-text" id="scoreText"></span>
+    </div>
+    <div id="violationsSection">
+      <p class="violations-title" id="violationsTitle">Violations Found</p>
+      <ul class="violations-list" id="violationsList"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_URL = "http://127.0.0.1:8000/api/v1/scans/init";
+
+  const fileInput = document.getElementById("fileInput");
+  const fileNameLabel = document.getElementById("fileName");
+  const scanBtn = document.getElementById("scanBtn");
+  const errorBox = document.getElementById("errorBox");
+  const canvasWrapper = document.getElementById("canvasWrapper");
+  const imageCanvas = document.getElementById("imageCanvas");
+  const report = document.getElementById("report");
+  const statusHeader = document.getElementById("statusHeader");
+  const statusText = document.getElementById("statusText");
+  const scoreText = document.getElementById("scoreText");
+  const violationsSection = document.getElementById("violationsSection");
+  const violationsTitle = document.getElementById("violationsTitle");
+  const violationsList = document.getElementById("violationsList");
+
+  let selectedFile = null;
+  let selectedImageObjectUrl = null;
+
+  function resetOutputs() {
+    errorBox.style.display = "none";
+    errorBox.textContent = "";
+    canvasWrapper.style.display = "none";
+    report.style.display = "none";
+    violationsList.innerHTML = "";
+  }
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.style.display = "block";
+  }
+
+  fileInput.addEventListener("change", () => {
+    resetOutputs();
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      selectedFile = null;
+      fileNameLabel.textContent = "No file selected";
+      scanBtn.disabled = true;
+      return;
+    }
+    selectedFile = file;
+    fileNameLabel.textContent = file.name;
+    scanBtn.disabled = false;
+  });
+
+  async function loadImageOntoCanvas(file) {
+    let processFile = file;
+
+    if (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif")) {
+        try {
+            const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.8 });
+            if (Array.isArray(conversionResult)) {
+                processFile = conversionResult[0];
+            } else {
+                processFile = conversionResult;
+            }
+        } catch (err) {
+            throw new Error("Could not convert HEIC image for browser display.");
+        }
+    }
+
+    return new Promise((resolve, reject) => {
+        const objectUrl = URL.createObjectURL(processFile);
+        const img = new Image();
+
+        img.onload = () => {
+            const maxWidth = 800;
+            const naturalWidth = img.naturalWidth;
+            const naturalHeight = img.naturalHeight;
+            const scale = Math.min(1, maxWidth / naturalWidth);
+            const canvasWidth = Math.round(naturalWidth * scale);
+            const canvasHeight = Math.round(naturalHeight * scale);
+
+            imageCanvas.width = canvasWidth;
+            imageCanvas.height = canvasHeight;
+
+            const ctx = imageCanvas.getContext("2d");
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+
+            canvasWrapper.style.display = "block";
+
+            resolve({ ctx, naturalWidth, naturalHeight, canvasWidth, canvasHeight });
+
+            URL.revokeObjectURL(objectUrl);
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error("Failed to load the selected image onto the canvas."));
+        };
+
+        img.src = objectUrl;
+    });
+}
+
+  function drawViolationBoxes(ctx, violations, scaleX, scaleY) {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255, 0, 0, 1)";
+    ctx.fillStyle = "rgba(255, 0, 0, 0.15)";
+
+    violations.forEach((v) => {
+      if (!v.bbox || v.bbox.length !== 4) return;
+      const [xMin, yMin, xMax, yMax] = v.bbox;
+
+      const scaledX = xMin * scaleX;
+      const scaledY = yMin * scaleY;
+      const scaledW = (xMax - xMin) * scaleX;
+      const scaledH = (yMax - yMin) * scaleY;
+
+      ctx.fillRect(scaledX, scaledY, scaledW, scaledH);
+      ctx.strokeRect(scaledX, scaledY, scaledW, scaledH);
+    });
+  }
+
+  function renderReport(data) {
+    const isCompliant = data.is_compliant;
+    const score = data.score;
+    const violations = Array.isArray(data.violations) ? data.violations : [];
+
+    statusHeader.classList.remove("pass", "fail");
+    statusHeader.classList.add(isCompliant ? "pass" : "fail");
+    statusText.textContent = isCompliant ? "PASS — Compliant" : "FAIL — Non-Compliant";
+    scoreText.textContent = "Score: " + score + " / 100";
+
+    violationsList.innerHTML = "";
+
+    if (!isCompliant && violations.length > 0) {
+      violationsSection.style.display = "block";
+      violations.forEach((v) => {
+        const li = document.createElement("li");
+
+        const fieldDiv = document.createElement("div");
+        fieldDiv.className = "violation-field";
+        fieldDiv.textContent = v.field_name || "Unknown Field";
+
+        const issueDiv = document.createElement("div");
+        issueDiv.className = "violation-issue";
+        issueDiv.textContent = v.issue || "No details provided.";
+
+        li.appendChild(fieldDiv);
+        li.appendChild(issueDiv);
+        violationsList.appendChild(li);
+      });
+    } else if (isCompliant) {
+      violationsSection.style.display = "block";
+      violationsTitle.textContent = "Violations";
+      const li = document.createElement("li");
+      li.className = "no-violations";
+      li.style.background = "transparent";
+      li.style.borderLeft = "none";
+      li.style.padding = "8px 0";
+      li.textContent = "No violations found. Label meets compliance requirements.";
+      violationsList.appendChild(li);
+    } else {
+      violationsSection.style.display = "none";
+    }
+
+    report.style.display = "block";
+  }
+
+  scanBtn.addEventListener("click", async () => {
+    if (!selectedFile) {
+      showError("Please select an image file first.");
+      return;
+    }
+
+    resetOutputs();
+
+    const originalBtnText = scanBtn.textContent;
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning... Please wait";
+
+    let canvasInfo;
+    try {
+      canvasInfo = await loadImageOntoCanvas(selectedFile);
+    } catch (err) {
+      showError(err.message || "Could not render the selected image.");
+      scanBtn.disabled = false;
+      scanBtn.textContent = originalBtnText;
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", selectedFile);
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        body: formData
+      });
+
+      if (!response.ok) {
+        let detail = "Server returned status " + response.status;
+        try {
+          const errJson = await response.json();
+          if (errJson && errJson.detail) {
+            detail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+          }
+        } catch (parseErr) {
+          // ignore parse failure, use default detail
+        }
+        throw new Error(detail);
+      }
+
+      const data = await response.json();
+
+      const scaleX = canvasInfo.canvasWidth / canvasInfo.naturalWidth;
+      const scaleY = canvasInfo.canvasHeight / canvasInfo.naturalHeight;
+
+      if (data.is_compliant === false && Array.isArray(data.violations)) {
+        drawViolationBoxes(canvasInfo.ctx, data.violations, scaleX, scaleY);
+      }
+
+      renderReport(data);
+
+    } catch (err) {
+      showError(
+        err && err.message
+          ? "Scan failed: " + err.message
+          : "Scan failed due to a network error. Please check your connection and try again."
+      );
+    } finally {
+      scanBtn.disabled = false;
+      scanBtn.textContent = originalBtnText;
+    }
+  });
+</script>
+
+</body>
+</html>
