@@ -20,6 +20,7 @@ Design notes:
 
 import re
 import bisect
+import datetime
 from dataclasses import dataclass, field
 from typing import Optional, List, Union, Dict, Any
 
@@ -44,6 +45,92 @@ def normalize_text(text: str) -> str:
     t = re.sub(r"\bNet\s*Wt\.?\b", "Net Wt", t, flags=re.IGNORECASE)
     t = re.sub(r"\bRs\s*\.\s*", "Rs ", t, flags=re.IGNORECASE)
     return t.strip()
+
+
+# ---------------------------------------------------------------------------
+# AUG 27 — normalization with character-level provenance map
+# ---------------------------------------------------------------------------
+# `normalize_text` above is frozen and untouched. This is a separate,
+# additive function used ONLY by the new Aug 27 fields, needed because
+# normalize_text's substitutions (whitespace collapsing, "M.R.P."->"MRP",
+# "Net Qty."->"Net Qty", "Rs." -> "Rs ") can change text length, so a
+# candidate's [start,end) offsets in the normalized text do NOT line up
+# with the original OCR-token offsets from _build_token_index(). Applying
+# them directly (the old behavior) could attach a neighboring token's
+# bbox/language/confidence to the wrong field.
+#
+# This function mirrors normalize_text's exact substitution sequence
+# (kept in sync manually — see the sync-check regression test) while also
+# building `char_map`, where char_map[i] is the ORIGINAL-text character
+# offset that produced normalized_text[i]. For a substituted/collapsed
+# span, every output character maps to the START of the original span
+# that produced it — sufficient to identify which original OCR token(s)
+# a normalized span came from, which is all bbox/language/confidence
+# attachment needs (token-level provenance, not exact character alignment).
+
+def _sub_with_map(pattern: str, replacement: str, cur_text: str,
+                   cur_map: List[int], flags: int = 0):
+    """Apply one re.sub step while carrying a parallel offset map forward."""
+    text_parts = []
+    map_parts = []
+    last_end = 0
+    for m in re.finditer(pattern, cur_text, flags):
+        text_parts.append(cur_text[last_end:m.start()])
+        map_parts.append(cur_map[last_end:m.start()])
+        origin = cur_map[m.start()] if m.start() < len(cur_map) else (
+            cur_map[-1] + 1 if cur_map else 0)
+        text_parts.append(replacement)
+        map_parts.append([origin] * len(replacement))
+        last_end = m.end()
+    text_parts.append(cur_text[last_end:])
+    map_parts.append(cur_map[last_end:])
+    new_text = "".join(text_parts)
+    new_map = [x for part in map_parts for x in part]
+    return new_text, new_map
+
+
+def _normalize_text_with_map(text: str):
+    """Returns (normalized_text, char_map). Must stay behaviorally
+    identical to normalize_text (same output string) — only adds
+    provenance tracking on top."""
+    if not text:
+        return "", []
+    t = text
+    m = list(range(len(text)))
+    t, m = _sub_with_map(r"[ \t]+", " ", t, m)
+    t, m = _sub_with_map(r"\n+", " \n ", t, m)
+    t, m = _sub_with_map(r"\bM\s*\.?\s*R\s*\.?\s*P\.?\b", "MRP", t, m, flags=re.IGNORECASE)
+    t, m = _sub_with_map(r"\bNet\s*Qty\.?\b", "Net Qty", t, m, flags=re.IGNORECASE)
+    t, m = _sub_with_map(r"\bNet\s*Wt\.?\b", "Net Wt", t, m, flags=re.IGNORECASE)
+    t, m = _sub_with_map(r"\bRs\s*\.\s*", "Rs ", t, m, flags=re.IGNORECASE)
+    # mirror t.strip()
+    lstripped = t.lstrip()
+    lstrip_len = len(t) - len(lstripped)
+    stripped = lstripped.rstrip()
+    final_map = m[lstrip_len: lstrip_len + len(stripped)]
+    return stripped, final_map
+
+
+def _map_norm_span_to_original(char_map: List[int], start: int, end: int,
+                                orig_len: int):
+    """Maps a [start, end) span in normalized-text coordinates back to a
+    span in original-text coordinates, using the char_map produced by
+    _normalize_text_with_map. Degrades gracefully to an empty/zero-width
+    span (never crashes, never guesses a fixed offset) when the map is
+    empty or out of range — this only happens when there was no text to
+    begin with, in which case no candidate exists to look up anyway."""
+    if not char_map or orig_len <= 0:
+        return 0, 0
+    n = len(char_map)
+    s_idx = min(max(start, 0), n - 1)
+    e_idx = min(max(end - 1, 0), n - 1)
+    orig_start = char_map[s_idx]
+    orig_end = char_map[e_idx] + 1
+    if orig_end <= orig_start:
+        orig_end = orig_start + 1
+    orig_start = min(max(orig_start, 0), orig_len)
+    orig_end = min(max(orig_end, orig_start + 1), orig_len)
+    return orig_start, orig_end
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +214,11 @@ def _proximity_bonus(distance: int) -> float:
 MRP_LABELS = [
     (r"\bMaximum\s+Retail\s+Price\b", "Maximum Retail Price"),
     (r"\bMRP\b", "MRP"),
+    # Aug 27 addition: Hindi MRP label, purely additive — same downstream
+    # currency/amount regex handles the value after either an English or
+    # Hindi label, so no other MRP logic changes. Digits/currency symbols
+    # are unaffected by language.
+    (r"अधिकतम\s*खुदरा\s*मूल्य", "Maximum Retail Price (Hindi)"),
 ]
 
 MRP_NEGATIVE = [
@@ -618,6 +710,522 @@ def resolve_net_quantity(text: str) -> FieldResult:
                         [c.to_dict() for c in candidates], ambiguous=ambiguous)
 
 
+# =============================================================================
+# AUG 27 — Manufacturer/Address, Manufacturing Date, Consumer Care
+# =============================================================================
+#
+# Additive only. Nothing above this block (MRP / Net Quantity) is modified,
+# except one purely-additive Hindi MRP label tuple (see MRP_LABELS above),
+# which cannot change English-only behavior since it only adds a new regex
+# alternative that matches Devanagari text no existing test contains.
+#
+# These new fields reuse the existing Candidate / FieldResult architecture:
+# boundary-aware label->value search (_boundaries / _effective_window_end),
+# negative-context suppression (_has_within_span), and deterministic
+# selection (_select_best). No new scoring system is introduced.
+
+from collections import Counter as _Counter
+
+
+# ---------------------------------------------------------------------------
+# Centralized field keyword dictionary (English + Hindi)
+# ---------------------------------------------------------------------------
+# Reference/documentation dictionary organized by field and language. The
+# regex label lists below are the authoritative matching patterns; this
+# dict mirrors them for a single place downstream engineers can inspect
+# supported keywords per field/language. Hindi entries are added ONLY where
+# a real, verified translation was supplied — inventing translations for
+# fields with no supplied Hindi phrase would violate the "no unsupported
+# Hindi coverage" requirement, so those lists stay empty (English-only)
+# and unresolved Hindi text for those fields is a genuine limitation.
+FIELD_KEYWORDS = {
+    "MRP": {
+        "en": ["MRP", "M.R.P.", "Maximum Retail Price"],
+        "hi": ["अधिकतम खुदरा मूल्य"],
+    },
+    "NET_QUANTITY": {
+        "en": ["Net Qty", "Net Quantity", "Net Wt", "Net Weight"],
+        "hi": [],
+    },
+    "MANUFACTURER_ADDRESS": {
+        "en": ["Manufactured by", "Manufacturer", "Marketed by", "Manufactured for",
+               "Mfd. by", "Mfg. by", "Manufactured & Marketed by",
+               "Manufactured and Marketed by"],
+        "hi": [],
+    },
+    "MANUFACTURING_DATE": {
+        "en": ["Mfg Date", "Mfd Date", "Manufacturing Date", "Manufactured Date",
+               "Date of Manufacture", "Packed On", "Packing Date"],
+        "hi": [],
+    },
+    "CONSUMER_CARE": {
+        "en": ["Consumer Care", "Consumer Care Details", "Consumer Care No.",
+               "Consumer Care Number", "Customer Care", "Customer Care No.",
+               "Customer Care Number", "Customer Support", "Contact Us",
+               "Contact Details"],
+        "hi": [],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Extended field result (adds language + bbox evidence on top of FieldResult)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExtendedFieldResult:
+    field: str
+    value: Optional[Any]
+    confidence: str
+    raw_evidence: Optional[str]
+    language: Optional[str]
+    bbox: List[Any]
+    ambiguous: bool
+    all_candidates: List[Dict[str, Any]]
+
+    def to_dict(self):
+        return {
+            "field": self.field,
+            "value": self.value,
+            "confidence": self.confidence,
+            "raw_evidence": self.raw_evidence,
+            "language": self.language,
+            "bbox": self.bbox,
+            "ambiguous": self.ambiguous,
+            "all_candidates": self.all_candidates,
+        }
+
+
+# ---------------------------------------------------------------------------
+# OCR token indexing (bbox / confidence / language plumbing)
+# ---------------------------------------------------------------------------
+
+def _build_token_index(ocr_input: Union[str, List[Dict[str, Any]], None]):
+    """Returns (text, tokens).
+
+    `text` is built with the exact same join logic as `_coerce_to_text`
+    (single-space join of each token's 'text', skipping non-dict tokens or
+    missing/None text) so char offsets used here line up with the text the
+    frozen MRP/Net Quantity extractors already operate on.
+
+    `tokens` is a list of {"start","end","text","bbox","confidence",
+    "language"} dicts giving each token's character span in `text`. For a
+    raw string input, or when metadata is absent, tokens is simply []
+    (or has None metadata fields) — callers must not crash on that.
+    """
+    if isinstance(ocr_input, str):
+        return ocr_input, []
+    if not isinstance(ocr_input, list):
+        return "", []
+
+    tokens = []
+    parts = []
+    cursor = 0
+    for tok in ocr_input:
+        if not isinstance(tok, dict):
+            continue
+        raw_text = tok.get("text")
+        if raw_text is None:
+            continue
+        s = str(raw_text)
+        if parts:
+            cursor += 1  # the single space that will join this token on
+        start = cursor
+        end = start + len(s)
+        tokens.append({
+            "start": start,
+            "end": end,
+            "text": s,
+            "bbox": tok.get("bbox"),
+            "confidence": tok.get("confidence"),
+            "language": tok.get("language"),
+        })
+        parts.append(s)
+        cursor = end
+    text = " ".join(parts)
+    return text, tokens
+
+
+def _supporting_tokens(tokens: List[Dict[str, Any]], start: int, end: int) -> List[Dict[str, Any]]:
+    """Tokens whose char span overlaps [start, end), in original OCR order."""
+    return [t for t in tokens if t["end"] > start and t["start"] < end]
+
+
+def _evidence_language(tokens: List[Dict[str, Any]], start: int, end: int,
+                        default: str = "en") -> str:
+    supporting = _supporting_tokens(tokens, start, end)
+    langs = [t["language"] for t in supporting if t.get("language")]
+    if not langs:
+        return default
+    return _Counter(langs).most_common(1)[0][0]
+
+
+def _evidence_bbox(tokens: List[Dict[str, Any]], start: int, end: int) -> List[Any]:
+    supporting = _supporting_tokens(tokens, start, end)
+    return [t["bbox"] for t in supporting if t.get("bbox") is not None]
+
+
+def _evidence_ocr_confidence(tokens: List[Dict[str, Any]], start: int, end: int) -> Optional[float]:
+    supporting = _supporting_tokens(tokens, start, end)
+    confs = [t["confidence"] for t in supporting if isinstance(t.get("confidence"), (int, float))]
+    if not confs:
+        return None
+    return sum(confs) / len(confs)
+
+
+def _finalize_extended(field_name: str, candidates: List[Candidate],
+                        tokens: List[Dict[str, Any]],
+                        char_map: List[int], orig_len: int,
+                        high_threshold: float = 0.9) -> ExtendedFieldResult:
+    """Shared selection + evidence-attachment step for the Aug 27 fields.
+    Deliberately reuses `_select_best` (same deterministic ranking as MRP /
+    Net Quantity) rather than inventing a new scoring system. OCR-confidence
+    is a simple downgrade-only signal: low average OCR confidence can pull
+    a 'high' extraction down to 'low', it never promotes anything.
+
+    IMPORTANT: `best.start`/`best.end` are offsets into the NORMALIZED text
+    (candidates were extracted from normalize_text's output), while `tokens`
+    spans are offsets into the ORIGINAL joined OCR text. `char_map` (from
+    _normalize_text_with_map) is used to translate the candidate's span
+    back to original-text coordinates BEFORE looking up supporting tokens,
+    so bbox/language/confidence are attached from the correct source
+    token(s) rather than whatever happens to sit at the same numeric
+    offset post-normalization."""
+    best, ambiguous = _select_best(candidates)
+    if best is None:
+        return ExtendedFieldResult(field_name, None, "none", None, None, [],
+                                    False, [c.to_dict() for c in candidates])
+
+    orig_start, orig_end = _map_norm_span_to_original(char_map, best.start, best.end, orig_len)
+
+    confidence = "high" if best.score >= high_threshold else "low"
+    ocr_conf = _evidence_ocr_confidence(tokens, orig_start, orig_end)
+    if ocr_conf is not None and ocr_conf < 0.5 and confidence == "high":
+        confidence = "low"
+
+    language = _evidence_language(tokens, orig_start, orig_end)
+    bbox = _evidence_bbox(tokens, orig_start, orig_end)
+
+    return ExtendedFieldResult(field_name, best.value, confidence, best.raw_evidence,
+                                language, bbox, ambiguous,
+                                [c.to_dict() for c in candidates])
+
+
+def _cross_field_boundaries(text: str) -> List[int]:
+    """Boundary set used ONLY by the new Aug 27 fields, so a manufacturer
+    address / date / consumer-care value search stops at the start of ANY
+    other recognized field label (MRP, Net Qty, or another Aug 27 field),
+    not just labels of its own field. MRP's and Net Quantity's own boundary
+    computation (inside extract_mrp_candidates / extract_net_qty_candidates)
+    is untouched and still uses only their own field's labels+negatives."""
+    all_positive = (MRP_LABELS + NET_QTY_LABELS + MANUFACTURER_LABELS +
+                     MFG_DATE_LABELS + EXPIRY_LABELS + CONSUMER_CARE_LABELS)
+    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE
+    return _boundaries(text, all_positive, all_negative)
+
+
+# ---------------------------------------------------------------------------
+# Manufacturer / Manufacturer Address
+# ---------------------------------------------------------------------------
+
+MANUFACTURER_LABELS = [
+    (r"\bManufactured\s*&\s*Marketed\s*by\b", "Manufactured & Marketed by"),
+    (r"\bManufactured\s*and\s*Marketed\s*by\b", "Manufactured and Marketed by"),
+    (r"\bManufactured\s*by\b", "Manufactured by"),
+    (r"\bManufactured\s*for\b", "Manufactured for"),
+    (r"\bMarketed\s*by\b", "Marketed by"),
+    (r"\bMfd\.?\s*by\b", "Mfd. by"),
+    (r"\bMfg\.?\s*by\b", "Mfg. by"),
+    (r"\bManufacturer\b", "Manufacturer"),
+]
+
+MANUFACTURER_WINDOW = 120  # an address block needs more room than a price/qty token
+MANUFACTURER_MIN_LEN = 3   # reject near-empty / truncated-to-nothing values
+
+
+def extract_manufacturer_candidates(text: str) -> List[Candidate]:
+    candidates: List[Candidate] = []
+    if not text:
+        return candidates
+
+    boundary_starts = _cross_field_boundaries(text)
+
+    for label_pat, label_name in MANUFACTURER_LABELS:
+        for lm in re.finditer(label_pat, text, re.IGNORECASE):
+            search_start = lm.end()
+            eff_end = _effective_window_end(text, lm.start(), search_start,
+                                             boundary_starts, MANUFACTURER_WINDOW)
+            raw_value = text[search_start:eff_end]
+            value_text = raw_value.strip(" :,-\n\t")
+
+            if len(value_text) < MANUFACTURER_MIN_LEN:
+                continue  # too short / empty -> weak, false-positive risk
+            if not re.search(r"[A-Za-z]", value_text):
+                continue  # no letters at all -> not a plausible company/address
+
+            # deterministic two-tier confidence: a very short fragment is
+            # kept but treated as low-confidence rather than discarded
+            score = 0.95 if len(value_text) >= 8 else 0.6
+
+            candidates.append(Candidate(
+                field="MANUFACTURER_ADDRESS", value=value_text,
+                raw_evidence=text[lm.start():eff_end].strip(),
+                label_matched=label_name, score=score,
+                start=lm.start(), end=eff_end,
+                reasons=[f"label='{label_name}'", f"value_len={len(value_text)}"],
+                reason_codes=["MANUFACTURER_LABEL_MATCH"],
+                suppressed=False,
+            ))
+
+    return candidates
+
+
+def resolve_manufacturer(text: str, tokens: Optional[List[Dict[str, Any]]] = None) -> ExtendedFieldResult:
+    tokens = tokens or []
+    text = text or ""
+    norm, char_map = _normalize_text_with_map(text)
+    candidates = extract_manufacturer_candidates(norm)
+    return _finalize_extended("MANUFACTURER_ADDRESS", candidates, tokens, char_map, len(text))
+
+
+# ---------------------------------------------------------------------------
+# Manufacturing Date
+# ---------------------------------------------------------------------------
+
+MFG_DATE_LABELS = [
+    (r"\bDate\s*of\s*Manufacture\b", "Date of Manufacture"),
+    (r"\bManufacturing\s*Date\b", "Manufacturing Date"),
+    (r"\bManufactured\s*Date\b", "Manufactured Date"),
+    (r"\bMfg\.?\s*Date\b", "Mfg Date"),
+    (r"\bMfd\.?\s*Date\b", "Mfd Date"),
+    (r"\bPacking\s*Date\b", "Packing Date"),
+    (r"\bPacked\s*On\b", "Packed On"),
+]
+
+EXPIRY_LABELS = [
+    (r"\bExpiry\s*Date\b", "Expiry Date"),
+    (r"\bExpiration\s*Date\b", "Expiration Date"),
+    (r"\bUse\s*By\b", "Use By"),
+    (r"\bBest\s*Before\b", "Best Before"),
+    (r"\bExp\.?\s*Date\b", "Exp. Date"),
+    (r"\bExp\b", "Exp"),
+]
+MFG_DATE_NEGATIVE = [pat for pat, _name in EXPIRY_LABELS] + [r"\bBatch\b", r"\bBatch\s*No\.?\b"]
+
+_MONTH_NAMES = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+_DATE_DMY4_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})\b")
+_DATE_YMD_RE = re.compile(r"\b(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\b")
+_DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
+_DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
+
+MFG_DATE_WINDOW = 40
+
+
+def _normalize_date(kind: str, groups) -> Optional[str]:
+    """Deterministic normalization to ISO 'YYYY-MM-DD'. Returns None for
+    anything not fully unambiguous — never invents missing components.
+    NOTE (documented assumption): 2-digit years are read as 2000+YY, since
+    packaged-goods manufacturing dates in this dataset are all modern-era;
+    this is the one place a component is inferred rather than read."""
+    try:
+        if kind == "dmy4":
+            d, mo, y = int(groups[0]), int(groups[1]), int(groups[2])
+        elif kind == "dmy2":
+            d, mo, yy = int(groups[0]), int(groups[1]), int(groups[2])
+            y = 2000 + yy
+        elif kind == "ymd":
+            y, mo, d = int(groups[0]), int(groups[1]), int(groups[2])
+        elif kind == "dmonY":
+            d = int(groups[0])
+            mon_key = groups[1][:3].lower()
+            mo = _MONTH_NAMES.get(mon_key)
+            if mo is None:
+                return None
+            y = int(groups[2])
+            if y < 100:
+                y += 2000
+        else:
+            return None
+    except (ValueError, IndexError, TypeError):
+        return None
+
+    try:
+        return datetime.date(y, mo, d).isoformat()
+    except ValueError:
+        # real calendar validation via stdlib datetime: rejects impossible
+        # dates (Feb 30, Apr 31, non-leap Feb 29, month/day out of range,
+        # etc.) rather than just range-checking 1..12 / 1..31 in isolation
+        return None
+
+
+def _find_date_candidates_in_window(window_text: str):
+    """Returns list of (start, end, kind, groups) sorted by start position,
+    de-duplicating so a 4-digit-year match's first-two-digits never also
+    gets picked up as a spurious separate 2-digit-year match."""
+    found = []
+    for m in _DATE_DMY4_RE.finditer(window_text):
+        found.append((m.start(), m.end(), "dmy4", m.groups()))
+    for m in _DATE_YMD_RE.finditer(window_text):
+        found.append((m.start(), m.end(), "ymd", m.groups()))
+    for m in _DATE_DMON_Y_RE.finditer(window_text):
+        mon_key = m.group(2)[:3].lower()
+        if mon_key in _MONTH_NAMES:
+            found.append((m.start(), m.end(), "dmonY", m.groups()))
+    for m in _DATE_DMY2_RE.finditer(window_text):
+        if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
+            continue
+        found.append((m.start(), m.end(), "dmy2", m.groups()))
+    found.sort(key=lambda f: f[0])
+    return found
+
+
+def extract_mfg_date_candidates(text: str) -> List[Candidate]:
+    candidates: List[Candidate] = []
+    if not text:
+        return candidates
+
+    boundary_starts = _cross_field_boundaries(text)
+
+    for label_pat, label_name in MFG_DATE_LABELS:
+        for lm in re.finditer(label_pat, text, re.IGNORECASE):
+            search_start = lm.end()
+            eff_end = _effective_window_end(text, lm.start(), search_start,
+                                             boundary_starts, MFG_DATE_WINDOW)
+            window_text = text[search_start:eff_end]
+            found = _find_date_candidates_in_window(window_text)
+            if not found:
+                continue
+
+            start_off, end_off, kind, groups = found[0]  # nearest to label
+            abs_start = search_start + start_off
+            abs_end = search_start + end_off
+            iso_value = _normalize_date(kind, groups)
+
+            reasons = [f"label='{label_name}'", f"format='{kind}'"]
+            reason_codes = ["MFG_DATE_LABEL_MATCH"]
+            if kind == "dmy2":
+                reasons.append("2-digit year assumed 2000+YY (documented assumption)")
+
+            neg = _has_within_span(MFG_DATE_NEGATIVE, text, lm.start(), abs_end)
+            suppressed = neg is not None
+            if suppressed:
+                reasons.append(f"suppressed: conflicting keyword '{neg}' within evidence span "
+                                f"(likely expiry/batch date, not manufacturing date)")
+                reason_codes.append("CONFLICT_SUPPRESSED")
+
+            if iso_value is None:
+                reasons.append("malformed date (out-of-range day/month) -> rejected, not guessed")
+                reason_codes.append("MALFORMED_DATE_REJECTED")
+                suppressed = True
+
+            score = 0.95 if kind in ("dmy4", "ymd", "dmonY") else 0.6  # dmy2 stays lower-confidence
+
+            candidates.append(Candidate(
+                field="MANUFACTURING_DATE", value=iso_value,
+                raw_evidence=text[lm.start():abs_end],
+                label_matched=label_name, score=score,
+                start=lm.start(), end=abs_end,
+                reasons=reasons, reason_codes=reason_codes,
+                suppressed=suppressed,
+            ))
+
+    return candidates
+
+
+def resolve_manufacturing_date(text: str, tokens: Optional[List[Dict[str, Any]]] = None) -> ExtendedFieldResult:
+    tokens = tokens or []
+    text = text or ""
+    norm, char_map = _normalize_text_with_map(text)
+    candidates = extract_mfg_date_candidates(norm)
+    return _finalize_extended("MANUFACTURING_DATE", candidates, tokens, char_map, len(text))
+
+
+# ---------------------------------------------------------------------------
+# Consumer Care
+# ---------------------------------------------------------------------------
+
+CONSUMER_CARE_LABELS = [
+    (r"\bConsumer\s*Care\s*Details\b", "Consumer Care Details"),
+    (r"\bConsumer\s*Care\s*No\.?\b", "Consumer Care No."),
+    (r"\bConsumer\s*Care\s*Number\b", "Consumer Care Number"),
+    (r"\bConsumer\s*Care\b", "Consumer Care"),
+    (r"\bCustomer\s*Care\s*No\.?\b", "Customer Care No."),
+    (r"\bCustomer\s*Care\s*Number\b", "Customer Care Number"),
+    (r"\bCustomer\s*Care\b", "Customer Care"),
+    (r"\bCustomer\s*Support\b", "Customer Support"),
+    (r"\bContact\s*Us\b", "Contact Us"),
+    (r"\bContact\s*Details\b", "Contact Details"),
+]
+
+_PHONE_RE = re.compile(
+    r"(?:\+?91[-\s]?)?\b\d{10}\b"          # 9876543210 / +91 9876543210
+    r"|\b\d{3,5}[-\s]\d{6,8}\b"            # 022-12345678 (STD code + number)
+    r"|\b\d{2,5}(?:[-\s]\d{2,5}){1,3}\b"   # 1800-123-4567 (toll-free, multi-hyphen)
+)
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+
+CONSUMER_CARE_WINDOW = 60
+
+
+def extract_consumer_care_candidates(text: str) -> List[Candidate]:
+    candidates: List[Candidate] = []
+    if not text:
+        return candidates
+
+    boundary_starts = _cross_field_boundaries(text)
+
+    for label_pat, label_name in CONSUMER_CARE_LABELS:
+        for lm in re.finditer(label_pat, text, re.IGNORECASE):
+            search_start = lm.end()
+            eff_end = _effective_window_end(text, lm.start(), search_start,
+                                             boundary_starts, CONSUMER_CARE_WINDOW)
+            window_text = text[search_start:eff_end]
+
+            phone_m = _PHONE_RE.search(window_text)
+            email_m = _EMAIL_RE.search(window_text)
+            phone = phone_m.group(0) if phone_m else None
+            email = email_m.group(0) if email_m else None
+
+            if phone is None and email is None:
+                continue  # no meaningful contact info found -> skip, not a candidate
+
+            last_end = max(
+                (m.end() for m in (phone_m, email_m) if m is not None),
+                default=0,
+            )
+            abs_end = search_start + last_end
+
+            reasons = [f"label='{label_name}'"]
+            reason_codes = ["CONSUMER_CARE_LABEL_MATCH"]
+            if phone:
+                reason_codes.append("PHONE_MATCH")
+            if email:
+                reason_codes.append("EMAIL_MATCH")
+
+            candidates.append(Candidate(
+                field="CONSUMER_CARE", value={"phone": phone, "email": email},
+                raw_evidence=text[lm.start():abs_end],
+                label_matched=label_name, score=0.9,
+                start=lm.start(), end=abs_end,
+                reasons=reasons, reason_codes=reason_codes,
+                suppressed=False,
+            ))
+
+    return candidates
+
+
+def resolve_consumer_care(text: str, tokens: Optional[List[Dict[str, Any]]] = None) -> ExtendedFieldResult:
+    tokens = tokens or []
+    text = text or ""
+    norm, char_map = _normalize_text_with_map(text)
+    candidates = extract_consumer_care_candidates(norm)
+    return _finalize_extended("CONSUMER_CARE", candidates, tokens, char_map, len(text))
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -640,19 +1248,33 @@ def _coerce_to_text(ocr_input: Union[str, List[Dict[str, Any]], None]) -> str:
 
 def map_fields(ocr_input: Union[str, List[Dict[str, Any]], None]) -> Dict[str, Any]:
     """Main integration entry point.
-    Input: raw OCR string, OR list of OCR token dicts (see _coerce_to_text).
-    Output: dict with 'MRP' and 'NET_QUANTITY' FieldResult dicts.
+    Input: raw OCR string, OR list of OCR token dicts — plain {'text':...}
+    tokens (Aug 26 compatibility) or full EasyOCR-style tokens with
+    'bbox'/'confidence'/'language' (Aug 27). Missing optional metadata on
+    any token is tolerated, never crashes.
+    Output: dict with 'MRP', 'NET_QUANTITY', 'MANUFACTURER_ADDRESS',
+    'MANUFACTURING_DATE', and 'CONSUMER_CARE' result dicts.
     """
-    text = _coerce_to_text(ocr_input)
+    text, tokens = _build_token_index(ocr_input)
+
     mrp = resolve_mrp(text)
     net_qty = resolve_net_quantity(text)
+    manufacturer = resolve_manufacturer(text, tokens)
+    mfg_date = resolve_manufacturing_date(text, tokens)
+    consumer_care = resolve_consumer_care(text, tokens)
+
     return {
         "MRP": mrp.to_dict(),
         "NET_QUANTITY": net_qty.to_dict(),
+        "MANUFACTURER_ADDRESS": manufacturer.to_dict(),
+        "MANUFACTURING_DATE": mfg_date.to_dict(),
+        "CONSUMER_CARE": consumer_care.to_dict(),
     }
 
 
 if __name__ == "__main__":
-    sample = "MRP ₹249 (incl. of all taxes) Net Qty. 500 g Offer Price ₹199"
+    sample = ("MRP ₹249 (incl. of all taxes) Net Qty. 500 g "
+              "Manufactured by ABC Foods Pvt Ltd, Mumbai "
+              "Mfg Date 01/06/2026 Consumer Care 1800-123-4567")
     import json
     print(json.dumps(map_fields(sample), indent=2))
