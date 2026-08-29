@@ -3,7 +3,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.field_mapping import resolve_mrp, resolve_net_quantity, map_fields
+from app.field_mapping import (
+    resolve_mrp, resolve_net_quantity, map_fields,
+    resolve_manufacturer, resolve_manufacturing_date, resolve_consumer_care,
+)
 
 PASS = 0
 FAIL = 0
@@ -253,6 +256,110 @@ r = resolve_net_quantity("MRP ₹249 | Net Qty 1,23,45,678 g")
 check("Case16d: valid long Indian grouping resolves", r.value == {"amount": 12345678.0, "unit": "g"}, f"got {r.value}")
 
 # ---------------------------------------------------------------------------
+# Case 17: Aug 27 — multiple dates, expiry adjacent to manufacturing date
+# ---------------------------------------------------------------------------
+s17 = "Mfg Date 01/06/2026 Expiry Date 01/06/2027 Best Before 01/12/2027"
+r = resolve_manufacturing_date(s17)
+check("Case17: Mfg Date correctly isolated from two trailing expiry-style dates",
+      r.value == "2026-06-01", f"got {r.value}")
+
+s17b = "Expiry Date 01/06/2027 Mfg Date 01/06/2026"
+r = resolve_manufacturing_date(s17b)
+check("Case17b: Mfg Date resolves even when Expiry Date precedes it",
+      r.value == "2026-06-01", f"got {r.value}")
+
+s17c = "Best Before 01/12/2027 Use By 01/01/2028"
+r = resolve_manufacturing_date(s17c)
+check("Case17c: no manufacturing date label at all -> None despite two dates present",
+      r.value is None, f"got {r.value}")
+
+# ---------------------------------------------------------------------------
+# Case 18: Aug 27 — multiple phone numbers / consumer care isolation
+# ---------------------------------------------------------------------------
+s18 = "Sales: 9123456780 Consumer Care 1800-123-4567 Support: 9988776655"
+r = resolve_consumer_care(s18)
+check("Case18: Consumer Care isolates its own labelled phone from unrelated numbers nearby",
+      r.value == {"phone": "1800-123-4567", "email": None}, f"got {r.value}")
+
+s18b = "call 9123456780 or 9988776655 for queries"
+r = resolve_consumer_care(s18b)
+check("Case18b: no consumer-care label at all -> None despite two phone numbers present",
+      r.value is None, f"got {r.value}")
+
+# ---------------------------------------------------------------------------
+# Case 19: Aug 27 — multiple company/address blocks, boundary isolation
+# ---------------------------------------------------------------------------
+s19 = "Manufactured by ABC Foods, Pune Marketed by XYZ Distributors, Delhi"
+r = resolve_manufacturer(s19)
+check("Case19: first manufacturer label claims its own bounded address block, "
+      "not swallowing the second label's block",
+      r.value == "ABC Foods, Pune", f"got {r.value}")
+
+s19b = "Marketed by XYZ Distributors, Delhi Manufactured by ABC Foods, Pune"
+r = resolve_manufacturer(s19b)
+check("Case19b: first label in text order claims its own value when both are equally strong",
+      r.value == "XYZ Distributors, Delhi", f"got {r.value}")
+
+# ---------------------------------------------------------------------------
+# Case 20: Aug 27 — conflicting/mixed field labels in one dense string
+# ---------------------------------------------------------------------------
+s20 = ("MRP ₹249 Net Qty 500 g Manufactured by ABC Foods Pvt Ltd, Pune "
+       "Mfg Date 01/06/2026 Expiry Date 01/06/2027 "
+       "Consumer Care 1800-123-4567 support@abcfoods.com")
+result = map_fields(s20)
+check("Case20: MRP correct amid dense multi-field text", result["MRP"]["value"] == 249.0, f"got {result['MRP']}")
+check("Case20: Net Qty correct amid dense multi-field text",
+      result["NET_QUANTITY"]["value"] == {"amount": 500.0, "unit": "g"}, f"got {result['NET_QUANTITY']}")
+check("Case20: Manufacturer bounded correctly before Mfg Date label",
+      result["MANUFACTURER_ADDRESS"]["value"] == "ABC Foods Pvt Ltd, Pune",
+      f"got {result['MANUFACTURER_ADDRESS']}")
+check("Case20: Mfg Date correct, not confused with following Expiry Date",
+      result["MANUFACTURING_DATE"]["value"] == "2026-06-01", f"got {result['MANUFACTURING_DATE']}")
+check("Case20: Consumer Care captures both phone and email",
+      result["CONSUMER_CARE"]["value"] == {"phone": "1800-123-4567", "email": "support@abcfoods.com"},
+      f"got {result['CONSUMER_CARE']}")
+
+# ---------------------------------------------------------------------------
+# Case 21: Aug 27 — mixed-language labels (Hindi MRP + English rest)
+# ---------------------------------------------------------------------------
+s21 = "अधिकतम खुदरा मूल्य ₹249 Net Qty 500 g Manufactured by ABC Foods, Pune"
+result = map_fields(s21)
+check("Case21: Hindi MRP label resolves correctly alongside English fields",
+      result["MRP"]["value"] == 249.0, f"got {result['MRP']}")
+check("Case21: English Net Qty unaffected by adjacent Hindi MRP label",
+      result["NET_QUANTITY"]["value"] == {"amount": 500.0, "unit": "g"}, f"got {result['NET_QUANTITY']}")
+check("Case21: English Manufacturer unaffected by adjacent Hindi MRP label",
+      result["MANUFACTURER_ADDRESS"]["value"] == "ABC Foods, Pune", f"got {result['MANUFACTURER_ADDRESS']}")
+
+# ---------------------------------------------------------------------------
+# Case 22: Aug 27 — malformed OCR across the new fields
+# ---------------------------------------------------------------------------
+s22 = "Manufactured by abc249 Mfg Date 45/13/2026 Consumer Care abcxyz"
+r = resolve_manufacturer(s22)
+check("Case22: manufacturer with digit-glued garbage value still extracted as text "
+      "(no numeric validation applies to free-text address)",
+      r.value == "abc249", f"got {r.value}")
+
+r = resolve_manufacturing_date(s22)
+check("Case22: malformed date (45/13/2026) rejected, not partially accepted",
+      r.value is None, f"got {r.value}")
+
+r = resolve_consumer_care(s22)
+check("Case22: consumer care label with no real phone/email nearby -> rejected",
+      r.value is None, f"got {r.value}")
+
+malformed_ocr_tokens = [
+    {"text": "MRP"}, {"text": None}, {"confidence": 0.5}, "not_a_dict",
+    {"text": "₹249"}, {"text": "Manufactured", "language": "en"},
+    {"text": "by"}, {"text": "ABC"},
+]
+result = map_fields(malformed_ocr_tokens)
+check("Case22b: malformed/heterogeneous OCR token list does not crash map_fields",
+      result["MRP"]["value"] == 249.0, f"got {result['MRP']}")
+check("Case22b: manufacturer still resolves from the well-formed tokens in the same malformed list",
+      result["MANUFACTURER_ADDRESS"]["value"] == "ABC", f"got {result['MANUFACTURER_ADDRESS']}")
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 
@@ -264,4 +371,5 @@ if FAILURES:
         print(f"  - {f}")
 print("=" * 60)
 
-sys.exit(0 if FAIL == 0 else 1)
+if __name__ == "__main__":
+    sys.exit(0 if FAIL == 0 else 1)

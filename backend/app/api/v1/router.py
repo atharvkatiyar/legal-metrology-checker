@@ -17,7 +17,6 @@ from app.services.ocr import extract_text_from_image
 from app.field_mapping import map_fields
 from app.services.rule_engine import check_compliance, FieldMappingOutput
 
-
 router = APIRouter()
 UPLOAD_DIR = "uploads"
 
@@ -41,9 +40,8 @@ async def init_scan(
     contents = await image.read()
     with open(image_path, "wb") as f:
         f.write(contents)
-        await image.close()
+    await image.close()
 
-        # Convert HEIC to JPG so OpenAI and the browser canvas can read it
     if image_path.lower().endswith(('.heic', '.heif')):
         img = Image.open(image_path)
         new_image_path = os.path.splitext(image_path)[0] + ".jpg"
@@ -51,40 +49,37 @@ async def init_scan(
         os.remove(image_path)
         image_path = new_image_path
 
-        # 1. Run the AI Pipeline
-        ocr_text = await extract_text_from_image(image_path)
-        if not ocr_text:
-            ocr_text = ""
-        mapping_result_dict = map_fields(ocr_text)
-        mapping_output = FieldMappingOutput(fields=mapping_result_dict)
-        compliance_result = check_compliance(mapping_output)
+    ocr_text = await extract_text_from_image(image_path)
+    if not ocr_text:
+        ocr_text = ""
+    mapping_result_dict = map_fields(ocr_text)
+    mapping_output = FieldMappingOutput(fields=mapping_result_dict)
+    compliance_result = check_compliance(mapping_output)
 
-        # 2. Save the real results to the Database
-        scan_result = ScanResult(
-            id=uuid.uuid4(),
-            product_id=None,
-            image_path=image_path,
-            status="completed",
-            is_compliant=compliance_result.is_compliant,
-            compliance_score=compliance_result.score,
-            raw_ocr=ocr_text,
-            extracted_fields=mapping_result_dict,
-            created_at=utcnow(),
-        )
-        db.add(scan_result)
+    scan_result = ScanResult(
+        id=uuid.uuid4(),
+        product_id=None,
+        image_path=image_path,
+        status="completed",
+        is_compliant=compliance_result.is_compliant,
+        compliance_score=compliance_result.score,
+        raw_ocr=ocr_text,
+        extracted_fields=mapping_result_dict,
+        created_at=utcnow(),
+    )
+    db.add(scan_result)
 
-        # Save the violations to the database too
-        for v in compliance_result.violations:
-            db.add(
-                ViolationRecord(
-                    scan_id=scan_result.id,
-                    field_name=v.field_name,
-                    issue=v.issue,
-                    severity=v.severity,
-                    bbox=v.bbox,
-                    legal_reference=v.legal_reference,
-                )
+    for v in compliance_result.violations:
+        db.add(
+            ViolationRecord(
+                scan_id=scan_result.id,
+                field_name=v.field_name,
+                issue=v.issue,
+                severity=v.severity,
+                bbox=v.bbox,
+                legal_reference=v.legal_reference,
             )
+        )
 
     await db.commit()
     await db.refresh(scan_result)

@@ -1,457 +1,752 @@
-<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Legal Metrology Compliance Checker</title>
+<title>LMCS — Legal Metrology Compliance System (Prototype)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
-  * {
-    box-sizing: border-box;
+  :root { font-size: 16px; }
+  * { -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f3f4f6; }
+  .action-tile { transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; }
+  .action-tile:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+  .action-tile:active { transform: scale(0.98); }
+  .tap-target { min-height: 44px; min-width: 44px; }
+  .captcha-bg {
+    background-image: repeating-linear-gradient(45deg, #e5e7eb 0px, #e5e7eb 2px, #eef0f2 2px, #eef0f2 8px);
+    letter-spacing: 0.25em;
   }
-
-  body {
-    margin: 0;
-    padding: 40px 20px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #f4f5f7;
-    color: #1a1a1a;
-    display: flex;
-    justify-content: center;
+  .spin-once { animation: spin360 0.5s ease-in-out; }
+  @keyframes spin360 { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .modal-backdrop { background: rgba(15, 23, 42, 0.55); }
+  #network-status.hidden { display: none; }
+  .nav-link-active { position: relative; }
+  .nav-link-active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -14px; height: 3px; background: #0b727b; border-radius: 2px;
   }
-
-  .container {
-    width: 100%;
-    max-width: 860px;
-    background: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
-    padding: 32px;
+  .fade-in { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .progress-bar-inner { transition: width 0.3s ease; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
+  .role-option {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; text-align: left;
+    background: rgba(255,255,255,0.06); border: 1.5px solid rgba(255,255,255,0.25); border-radius: 10px;
+    padding: 16px 18px; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    font-family: inherit;
   }
-
-  h1 {
-    font-size: 24px;
-    margin: 0 0 6px 0;
-    font-weight: 700;
-  }
-
-  .subtitle {
-    color: #6b7280;
-    font-size: 14px;
-    margin-bottom: 28px;
-  }
-
-  .upload-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 24px;
-    background: #fafafa;
-    border: 1.5px dashed #d1d5db;
-    border-radius: 12px;
-    margin-bottom: 24px;
-  }
-
-  .file-input-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  input[type="file"] {
-    display: none;
-  }
-
-  .file-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    color: #374151;
-    transition: background 0.15s ease, border-color 0.15s ease;
-  }
-
-  .file-label:hover {
-    background: #f3f4f6;
-    border-color: #9ca3af;
-  }
-
-  .file-name {
-    font-size: 13px;
-    color: #6b7280;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 260px;
-  }
-
-  .scan-btn {
-    align-self: flex-start;
-    padding: 12px 28px;
-    background: #2563eb;
-    color: #ffffff;
-    border: none;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
-  }
-
-  .scan-btn:hover:not(:disabled) {
-    background: #1d4ed8;
-  }
-
-  .scan-btn:disabled {
-    background: #93c5fd;
-    cursor: not-allowed;
-    opacity: 0.85;
-  }
-
-  .error-box {
-    display: none;
-    padding: 14px 16px;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #b91c1c;
-    border-radius: 8px;
-    font-size: 14px;
-    margin-bottom: 24px;
-  }
-
-  .canvas-wrapper {
-    display: none;
-    width: 100%;
-    text-align: center;
-    margin-bottom: 24px;
-  }
-
-  canvas {
-    max-width: 100%;
-    height: auto;
-    border-radius: 10px;
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
-  }
-
-  .report {
-    display: none;
-  }
-
-  .status-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 20px 24px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-  }
-
-  .status-header.pass {
-    background: #ecfdf5;
-    border: 1px solid #a7f3d0;
-  }
-
-  .status-header.fail {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-  }
-
-  .status-text {
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-  }
-
-  .status-header.pass .status-text {
-    color: #047857;
-  }
-
-  .status-header.fail .status-text {
-    color: #b91c1c;
-  }
-
-  .score-text {
-    font-size: 16px;
-    font-weight: 600;
-    color: #374151;
-  }
-
-  .violations-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: #374151;
-    margin: 0 0 12px 0;
-  }
-
-  ul.violations-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  ul.violations-list li {
-    padding: 14px 16px;
-    background: #fef2f2;
-    border-left: 4px solid #dc2626;
-    border-radius: 6px;
-  }
-
-  .violation-field {
-    font-weight: 700;
-    color: #b91c1c;
-    text-transform: uppercase;
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    margin-bottom: 4px;
-  }
-
-  .violation-issue {
-    color: #dc2626;
-    font-size: 14px;
-  }
-
-  .no-violations {
-    color: #047857;
-    font-size: 14px;
-    padding: 8px 0;
-  }
+  .role-option:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.5); transform: translateY(-1px); }
+  .goog-te-banner-frame.skiptranslate { display: none !important; }
+  body { top: 0px !important; }
+  .goog-te-combo { display: none !important; }
+  .VIpgJd-ZVi9od-ORHb-OEVmcd { display: none !important; } /* Hides Google tooltip */
 </style>
 </head>
-<body>
+<body class="text-slate-800">
 
-<div class="container">
-  <h1>Legal Metrology Compliance Checker</h1>
-  <p class="subtitle">Upload a product label image to check compliance against legal metrology rules.</p>
+<div class="fixed top-3 left-3 z-50">
+  <div id="network-status" class="hidden text-xs font-semibold px-2 py-0.5 rounded shadow"></div>
+</div>
 
-  <div class="upload-panel">
-    <div class="file-input-wrapper">
-      <label class="file-label" for="fileInput">Choose Image</label>
-      <input type="file" id="fileInput" accept="image/*">
-      <span class="file-name" id="fileName">No file selected</span>
+<!-- Section A: Accessibility & Language Strip -->
+<div class="w-full bg-white border-b border-gray-200">
+  <div class="max-w-7xl mx-auto px-4 py-1.5 flex items-center justify-end gap-6 text-xs text-slate-600 flex-wrap w-full">
+
+    <!-- Zoom Controls -->
+    <div class="flex flex-col items-center justify-center">
+      <div class="flex items-center gap-1">
+        <span class="mr-1 hidden sm:inline">Text Size:</span>
+        <button id="font-inc" class="tap-target px-2 py-1 rounded hover:bg-gray-100 font-bold" aria-label="Increase font size">A+</button>
+        <span class="text-gray-300">|</span>
+        <button id="font-norm" class="tap-target px-2 py-1 rounded hover:bg-gray-100 font-semibold" aria-label="Normal font size">A</button>
+        <span class="text-gray-300">|</span>
+        <button id="font-dec" class="tap-target px-2 py-1 rounded hover:bg-gray-100 font-bold" aria-label="Decrease font size">A-</button>
+      </div>
+      <span id="zoom-level-display" class="text-[10px] font-bold text-[#0b727b] mt-0.5 tracking-wide">100%</span>
     </div>
-    <button class="scan-btn" id="scanBtn" disabled>Scan Label</button>
+
+    <!-- Language Controls -->
+    <div class="flex flex-col items-center justify-center">
+      <div class="flex items-center gap-1">
+        <button id="lang-en" class="tap-target px-2 py-1 rounded hover:bg-gray-100 font-bold text-[#0b727b]">English</button>
+        <span class="text-gray-300">|</span>
+        <button id="lang-hi" class="tap-target px-2 py-1 rounded hover:bg-gray-100 font-semibold text-slate-600">हिन्दी</button>
+      </div>
+      <!-- Hidden Google Translate Mount -->
+      <div id="google_translate_element" style="display:none;"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Section B: Main Header -->
+<header class="bg-white">
+  <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-12 h-12 rounded-full bg-gradient-to-br from-[#0b727b] to-[#0e8388] flex items-center justify-center text-white text-xl shadow">
+        <i class="fa-solid fa-scale-balanced"></i>
+      </div>
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-wide text-slate-600">निदेशालय — व्यापारिक अनुपालन सत्यापन</p>
+        <p class="text-[10px] font-medium text-slate-500">Directorate of Trade &amp; Packaging Standards Verification (Demo Sandbox)</p>
+      </div>
+    </div>
+    <div class="text-center">
+      <p class="text-[28px] font-extrabold leading-none">
+        <span style="color:#ea580c;">LM</span><span style="color:#0b727b;">CS</span>
+      </p>
+      <p class="text-[11px] font-bold tracking-wider text-slate-700 mt-1">LEGAL METROLOGY COMPLIANCE SYSTEM</p>
+      <p class="text-[9px] font-semibold text-amber-600 mt-0.5 uppercase tracking-wide">SIH 2026 Prototype — Not an Official Government Service</p>
+    </div>
+    <div id="header-officer-panel" class="text-right hidden">
+      <p class="text-sm font-extrabold text-[#0b727b]" id="header-officer-id">—</p>
+      <p class="text-[10px] font-medium text-slate-500" id="header-officer-role">—</p>
+      <button id="header-signout-btn" class="tap-target mt-1 text-[10px] font-bold text-white px-3 py-1 rounded bg-slate-600 hover:bg-slate-700">Sign Out</button>
+    </div>
+    <div id="header-tagline-panel" class="text-right">
+      <p class="text-sm font-extrabold" style="color:#ea580c;">सजग ग्राहक, सशक्त बाज़ार</p>
+      <p class="text-[10px] font-medium text-slate-500">Fair Trade &amp; Consumer Confidence Initiative (Fictional Demo Program)</p>
+    </div>
+  </div>
+  <div style="height:4px; background:#0b727b; width:100%;"></div>
+</header>
+
+<!-- Section C: Main Navigation -->
+<nav class="bg-white shadow-sm sticky top-0 z-40">
+  <div class="max-w-7xl mx-auto px-4">
+    <div class="flex items-center justify-between h-14">
+      <button id="hamburger-btn" class="tap-target md:hidden flex items-center justify-center text-slate-700" aria-label="Toggle menu">
+        <i class="fa-solid fa-bars text-lg"></i>
+      </button>
+      <div class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-700 mx-auto">
+        <a href="#" class="tap-target flex items-center hover:text-[#0b727b]">Home</a>
+        <a href="#" class="tap-target flex items-center hover:text-[#0b727b]">About LMCS</a>
+        <a href="#" class="tap-target flex items-center hover:text-[#0b727b]">Packaged Commodities Standards (Demo Ruleset)</a>
+        <a href="#" class="tap-target flex items-center hover:text-[#0b727b]">User Manual &amp; SOPs</a>
+        <a href="#" class="tap-target flex items-center hover:text-[#1d4ed8] font-bold text-[#1d4ed8]">Login - Manufacturers / Packers</a>
+        <a href="#officer-login" class="tap-target flex items-center font-semibold text-[#0b727b] nav-link-active">Login - Enforcement Officers</a>
+      </div>
+    </div>
+    <div id="mobile-menu" class="hidden md:hidden flex-col gap-1 pb-3 text-sm font-medium text-slate-700">
+      <a href="#" class="tap-target flex items-center px-2 rounded hover:bg-gray-50">Home</a>
+      <a href="#" class="tap-target flex items-center px-2 rounded hover:bg-gray-50">About LMCS</a>
+      <a href="#" class="tap-target flex items-center px-2 rounded hover:bg-gray-50">Packaged Commodities Standards (Demo Ruleset)</a>
+      <a href="#" class="tap-target flex items-center px-2 rounded hover:bg-gray-50">User Manual &amp; SOPs</a>
+      <a href="#" class="tap-target flex items-center px-2 rounded hover:bg-gray-50 font-bold text-[#1d4ed8]">Login - Manufacturers / Packers</a>
+      <a href="#officer-login" class="tap-target flex items-center px-2 rounded hover:bg-gray-50 font-semibold text-[#0b727b]">Login - Enforcement Officers</a>
+    </div>
+  </div>
+</nav>
+
+<main class="max-w-7xl mx-auto px-4 py-8">
+
+  <!-- LOGIN VIEW -->
+  <div id="officer-login" class="flex justify-center mb-10">
+    <div class="w-full max-w-[420px] shadow-xl rounded-t-lg overflow-hidden bg-white">
+      <div class="flex items-center gap-2 px-5 py-3" style="background:#0b727b;">
+        <i class="fa-solid fa-arrow-right-to-bracket text-white"></i>
+        <h2 class="text-white font-bold text-sm tracking-wide">Officer Sign-in (Demo)</h2>
+      </div>
+      <form id="login-form" class="p-5 flex flex-col gap-4">
+        <div>
+          <label for="officer-id" class="block text-xs font-semibold text-slate-600 mb-1">Officer ID / Demo Email</label>
+          <input id="officer-id" type="text" placeholder="e.g. DEMO-LMO-40812" class="tap-target w-full rounded border px-3 py-2 text-sm" style="background:#f9fafb; border-color:#d1d5db;">
+        </div>
+        <div>
+          <label for="officer-password" class="block text-xs font-semibold text-slate-600 mb-1">Password</label>
+          <div class="relative">
+            <input id="officer-password" type="password" placeholder="Enter demo password" class="tap-target w-full rounded border px-3 py-2 pr-10 text-sm" style="background:#f9fafb; border-color:#d1d5db;">
+            <button type="button" id="toggle-password" class="tap-target absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center text-slate-500" aria-label="Toggle password visibility">
+              <i class="fa-solid fa-eye" id="toggle-password-icon"></i>
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Security Code</label>
+          <div class="flex items-center gap-2">
+            <div id="captcha-display" class="captcha-bg flex-1 text-center py-2 rounded font-mono font-bold text-slate-700 text-base select-none"></div>
+            <button type="button" id="captcha-refresh" class="tap-target flex items-center justify-center rounded border border-gray-300 text-slate-600 hover:bg-gray-50" aria-label="Refresh captcha">
+              <i class="fa-solid fa-arrows-rotate" id="captcha-refresh-icon"></i>
+            </button>
+          </div>
+        </div>
+        <div>
+          <label for="captcha-input" class="block text-xs font-semibold text-slate-600 mb-1">Enter Security Code</label>
+          <input id="captcha-input" type="text" placeholder="Type the code above" class="tap-target w-full rounded border px-3 py-2 text-sm" style="background:#f9fafb; border-color:#d1d5db;">
+        </div>
+        <div id="login-error" class="hidden text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2"></div>
+        <div class="flex gap-3">
+          <button type="submit" id="signin-btn" class="tap-target flex-1 flex items-center justify-center gap-2 rounded text-white font-semibold text-sm transition-colors" style="background:#0b727b;" onmouseover="this.style.background='#085157'" onmouseout="this.style.background='#0b727b'">
+            <span id="signin-btn-text">Sign-in</span>
+          </button>
+          <button type="button" id="back-btn" class="tap-target px-6 rounded text-white font-semibold text-sm transition-colors" style="background:#0d9488;" onmouseover="this.style.background='#0f766e'" onmouseout="this.style.background='#0d9488'">Back</button>
+        </div>
+        <a href="#" class="text-center text-xs hover:underline" style="color:#ea580c;">Forgot Officer ID / Password?</a>
+      </form>
+    </div>
   </div>
 
-  <div class="error-box" id="errorBox"></div>
-
-  <div class="canvas-wrapper" id="canvasWrapper">
-    <canvas id="imageCanvas"></canvas>
+  <!-- ROLE SELECTION VIEW -->
+  <div id="role-view" class="hidden justify-center mb-10">
+    <div class="w-full max-w-[560px] rounded-lg shadow-xl p-8" style="background:#0b727b;">
+      <div class="text-center mb-6">
+        <i class="fa-solid fa-user-shield text-white text-2xl mb-2"></i>
+        <h2 class="text-white font-bold text-base tracking-wide">Select Portal Access Level</h2>
+        <p class="text-teal-100 text-xs mt-1">Choose the role that matches your assigned duties</p>
+      </div>
+      <div class="flex flex-col gap-3">
+        <button class="role-option" data-role="Government Field Officer" data-permissions="Full Inspection &amp; Reporting Access">
+          <span class="text-white font-bold text-sm">Government Field Officer</span>
+          <span class="text-teal-100 text-xs leading-snug">Conduct inspections, upload product labels, generate compliance reports</span>
+        </button>
+        <button class="role-option" data-role="System Administrator" data-permissions="User Registry &amp; Rule Configuration Access">
+          <span class="text-white font-bold text-sm">System Administrator</span>
+          <span class="text-teal-100 text-xs leading-snug">Manage user registry, configure statutory rule parameters, audit logs</span>
+        </button>
+        <button class="role-option" data-role="Compliance Viewer" data-permissions="Read-Only Ledger &amp; Analytics Access">
+          <span class="text-white font-bold text-sm">Compliance Viewer</span>
+          <span class="text-teal-100 text-xs leading-snug">Read-only access to historical inspection ledgers and analytics</span>
+        </button>
+      </div>
+      <p class="text-center text-teal-200 text-[10px] mt-5">Role selection is logged for statutory audit purposes (demo).</p>
+    </div>
   </div>
 
-  <div class="report" id="report">
-    <div class="status-header" id="statusHeader">
-      <span class="status-text" id="statusText"></span>
-      <span class="score-text" id="scoreText"></span>
+  <!-- DASHBOARD VIEW -->
+  <div id="dashboard-view" class="hidden">
+    <!-- Section E: Action Tile Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-10">
+      <button data-modal="scan" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#f59e0b;">
+        <i class="fa-solid fa-camera text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">AI Label Scan (Demo Rule 6)</p>
+        <p class="text-xs opacity-90 leading-snug">Scan package photo to detect MRP, Net Qty, Dates, &amp; Packer Details</p>
+      </button>
+      <button data-modal="ecommerce" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#059669;">
+        <i class="fa-solid fa-globe text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">E-Commerce Listing Audit</p>
+        <p class="text-xs opacity-90 leading-snug">Automated URL scraper to check digital marketplace declarations</p>
+      </button>
+      <button data-modal="queue" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#0284c7;">
+        <i class="fa-solid fa-clipboard-check text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Field Inspection Queue</p>
+        <p class="text-xs opacity-90 leading-snug">Assigned godowns, retail sweeps, and offline inspection cache</p>
+      </button>
+      <button data-modal="notice" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#2563eb;">
+        <i class="fa-solid fa-file-invoice text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Show-Cause Notice Engine</p>
+        <p class="text-xs opacity-90 leading-snug">Auto-generate legal penalty notices with GPS-tagged evidence</p>
+      </button>
+      <button data-modal="register" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#334155;">
+        <i class="fa-solid fa-industry text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Demo Packer Directory</p>
+        <p class="text-xs opacity-90 leading-snug">Verify registered manufacturers, packers, and importers (sample data)</p>
+      </button>
     </div>
-    <div id="violationsSection">
-      <p class="violations-title" id="violationsTitle">Violations Found</p>
-      <ul class="violations-list" id="violationsList"></ul>
+
+    <!-- Section F: Info Panels -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+      <div class="rounded-lg overflow-hidden shadow bg-white">
+        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#65a30d;">ANNOUNCEMENTS (SAMPLE)</div>
+        <div class="p-4 flex flex-col gap-3 text-sm">
+          <div class="border-b border-gray-100 pb-3">
+            <p class="font-semibold text-slate-700">Sample notice: Unit Sale Price (USP) demo checklist updated for Rule 6(1)(e) equivalent</p>
+            <p class="text-xs text-slate-400 mt-1">Aug 24, 2026</p>
+          </div>
+          <div class="border-b border-gray-100 pb-3">
+            <p class="font-semibold text-slate-700">Sample sweep: Simulated e-commerce dual-MRP detection drill scheduled</p>
+            <p class="text-xs text-slate-400 mt-1">Aug 19, 2026</p>
+          </div>
+          <div>
+            <p class="font-semibold text-slate-700">Sample update: Font-size measurement module demo dataset expanded</p>
+            <p class="text-xs text-slate-400 mt-1">Aug 12, 2026</p>
+          </div>
+          <a href="#" class="text-right font-bold text-sm hover:underline" style="color:#0b727b;">SEE ALL &rarr;</a>
+        </div>
+      </div>
+      <div class="rounded-lg overflow-hidden shadow bg-white">
+        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#075985;">HELP TOPICS &amp; SOPs (SAMPLE)</div>
+        <div class="p-4 flex flex-col gap-3 text-sm">
+          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Checklist: Mandatory Packaging Declarations (Sample Rule 6)</span></a>
+          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Matrix: Minimum Font Size Area Scaling (Sample Rule 9)</span></a>
+          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Schedule: Standard Quantities for Sample Commodities</span></a>
+          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo SOP: Simulated Seizure &amp; Compounding Workflow</span></a>
+        </div>
+      </div>
+      <div class="rounded-lg overflow-hidden shadow bg-white">
+        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#0ea5e9;">DEMO HELPDESK</div>
+        <div class="p-4 flex flex-col gap-3 text-sm">
+          <div><p class="font-semibold text-slate-700">Demo Helpline:</p><p class="text-slate-500">1800-XXX-000 (Sample Number)</p></div>
+          <div><p class="font-semibold text-slate-700">Operating Hours:</p><p class="text-slate-500">09:30 AM to 06:00 PM (Mon - Sat) — Demo Hours</p></div>
+          <div><p class="font-semibold text-slate-700">Demo Email:</p><p class="text-slate-500">support@demo-lmcs.local</p></div>
+          <div><p class="font-semibold text-slate-700">Sample Office:</p><p class="text-slate-500">Fictional Compliance Cell, Demo Complex, Sandbox City</p></div>
+        </div>
+      </div>
     </div>
+  </div>
+</main>
+
+<!-- Section G: Footer -->
+<footer style="background:#085157;" class="text-white">
+  <div class="max-w-7xl mx-auto px-4 py-10 grid grid-cols-1 md:grid-cols-4 gap-8 text-sm">
+    <div>
+      <p class="font-bold mb-3 text-teal-100">Sample Framework References</p>
+      <ul class="flex flex-col gap-2 text-teal-200">
+        <li><a href="#" class="hover:underline">Demo Legal Metrology Reference Act (Sample)</a></li>
+        <li><a href="#" class="hover:underline">Demo Packaged Commodities Standards (Sample)</a></li>
+        <li><a href="#" class="hover:underline">Demo General Rules Reference (Sample)</a></li>
+        <li><a href="#" class="hover:underline">Sample Gazette Notification Archive</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="font-bold mb-3 text-teal-100">Enforcement Resources (Demo)</p>
+      <ul class="flex flex-col gap-2 text-teal-200">
+        <li><a href="#" class="hover:underline">Sample State Controllers Directory</a></li>
+        <li><a href="#" class="hover:underline">Demo Evidence Collection Protocol</a></li>
+        <li><a href="#" class="hover:underline">Sample Reference Standard Labs List</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="font-bold mb-3 text-teal-100">Allied Demo Portals</p>
+      <ul class="flex flex-col gap-2 text-teal-200">
+        <li><a href="#" class="hover:underline">Sample Trade Portal (Fictional)</a></li>
+        <li><a href="#" class="hover:underline">Sample Consumer Helpline Portal (Fictional)</a></li>
+        <li><a href="#" class="hover:underline">Sample Product Data Registry (Fictional)</a></li>
+        <li><a href="#" class="hover:underline">Sample Standards Care Portal (Fictional)</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="font-bold mb-3 text-teal-100">About This Build</p>
+      <p class="text-teal-200 leading-relaxed">Built as a Smart India Hackathon 2026 team prototype. This is a self-contained demo interface with fictional agency names and sample data — it is not affiliated with, endorsed by, or hosted on behalf of any government body.</p>
+    </div>
+  </div>
+  <div class="border-t border-teal-800 text-center py-4 text-xs text-teal-300">
+    © 2026 LMCS Prototype Team — SIH 2026 Submission. Sample content only, not an official service.
+  </div>
+</footer>
+
+<!-- Modal -->
+<div id="modal-root" class="hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
+  <div class="bg-white rounded-lg shadow-2xl max-w-lg w-full fade-in overflow-hidden max-h-[90vh] overflow-y-auto">
+    <div id="modal-header" class="px-5 py-3 flex items-center justify-between text-white sticky top-0 z-10">
+      <h3 id="modal-title" class="font-bold text-sm"></h3>
+      <button id="modal-close" class="tap-target flex items-center justify-center" aria-label="Close modal"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="modal-body" class="p-5 text-sm"></div>
   </div>
 </div>
 
 <script>
-  const API_URL = "http://127.0.0.1:8000/api/v1/scans/init";
+  // ---------- Zoom Engine (discrete-step, Chrome-style) ----------
+  const zoomLevels = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+  let currentZoomIndex = 7; // defaults to 100%
 
-  const fileInput = document.getElementById("fileInput");
-  const fileNameLabel = document.getElementById("fileName");
-  const scanBtn = document.getElementById("scanBtn");
-  const errorBox = document.getElementById("errorBox");
-  const canvasWrapper = document.getElementById("canvasWrapper");
-  const imageCanvas = document.getElementById("imageCanvas");
-  const report = document.getElementById("report");
-  const statusHeader = document.getElementById("statusHeader");
-  const statusText = document.getElementById("statusText");
-  const scoreText = document.getElementById("scoreText");
-  const violationsSection = document.getElementById("violationsSection");
-  const violationsTitle = document.getElementById("violationsTitle");
-  const violationsList = document.getElementById("violationsList");
-
-  let selectedFile = null;
-  let selectedImageObjectUrl = null;
-
-  function resetOutputs() {
-    errorBox.style.display = "none";
-    errorBox.textContent = "";
-    canvasWrapper.style.display = "none";
-    report.style.display = "none";
-    violationsList.innerHTML = "";
+  function applyZoom() {
+    const percent = zoomLevels[currentZoomIndex];
+    document.documentElement.style.fontSize = (percent / 100 * 16) + "px";
+    document.getElementById("zoom-level-display").textContent = percent + "%";
   }
 
-  function showError(message) {
-    errorBox.textContent = message;
-    errorBox.style.display = "block";
-  }
-
-  fileInput.addEventListener("change", () => {
-    resetOutputs();
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) {
-      selectedFile = null;
-      fileNameLabel.textContent = "No file selected";
-      scanBtn.disabled = true;
-      return;
+  document.getElementById("font-inc").addEventListener("click", () => {
+    if (currentZoomIndex < zoomLevels.length - 1) {
+      currentZoomIndex++;
     }
-    selectedFile = file;
-    fileNameLabel.textContent = file.name;
-    scanBtn.disabled = false;
+    applyZoom();
+  });
+  document.getElementById("font-norm").addEventListener("click", () => {
+    currentZoomIndex = 7;
+    applyZoom();
+  });
+  document.getElementById("font-dec").addEventListener("click", () => {
+    if (currentZoomIndex > 0) {
+      currentZoomIndex--;
+    }
+    applyZoom();
   });
 
-  async function loadImageOntoCanvas(file) {
-    let processFile = file;
+  // ---------- Google Translate API ----------
+  window.googleTranslateElementInit = function() {
+    new google.translate.TranslateElement({ pageLanguage: 'en', includedLanguages: 'en,hi', autoDisplay: false }, 'google_translate_element');
+  };
 
-    if (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif")) {
-        try {
-            const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.8 });
-            if (Array.isArray(conversionResult)) {
-                processFile = conversionResult[0];
-            } else {
-                processFile = conversionResult;
-            }
-        } catch (err) {
-            throw new Error("Could not convert HEIC image for browser display.");
-        }
+  const gtScript = document.createElement('script');
+  gtScript.src = "https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit";
+  document.body.appendChild(gtScript);
+
+  function triggerTranslation(langCode, activeBtnId, inactiveBtnId) {
+    const combo = document.querySelector('.goog-te-combo');
+    if (combo) {
+      combo.value = langCode;
+      combo.dispatchEvent(new Event('change'));
     }
 
-    return new Promise((resolve, reject) => {
-        const objectUrl = URL.createObjectURL(processFile);
-        const img = new Image();
+    const activeBtn = document.getElementById(activeBtnId);
+    const inactiveBtn = document.getElementById(inactiveBtnId);
 
-        img.onload = () => {
-            const maxWidth = 800;
-            const naturalWidth = img.naturalWidth;
-            const naturalHeight = img.naturalHeight;
-            const scale = Math.min(1, maxWidth / naturalWidth);
-            const canvasWidth = Math.round(naturalWidth * scale);
-            const canvasHeight = Math.round(naturalHeight * scale);
+    if (activeBtn) {
+      activeBtn.classList.add('font-bold', 'text-[#0b727b]');
+      activeBtn.classList.remove('font-semibold', 'text-slate-600');
+    }
+    if (inactiveBtn) {
+      inactiveBtn.classList.add('font-semibold', 'text-slate-600');
+      inactiveBtn.classList.remove('font-bold', 'text-[#0b727b]');
+    }
+  }
 
-            imageCanvas.width = canvasWidth;
-            imageCanvas.height = canvasHeight;
+  document.getElementById("lang-en").addEventListener("click", () => {
+    triggerTranslation('en', 'lang-en', 'lang-hi');
+  });
+  document.getElementById("lang-hi").addEventListener("click", () => {
+    triggerTranslation('hi', 'lang-hi', 'lang-en');
+  });
 
-            const ctx = imageCanvas.getContext("2d");
-            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+  // ---------- Mobile Menu ----------
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileMenu = document.getElementById("mobile-menu");
+  hamburgerBtn.addEventListener("click", () => {
+    if (mobileMenu.classList.contains("hidden")) {
+      mobileMenu.classList.remove("hidden");
+      mobileMenu.classList.add("flex");
+    } else {
+      mobileMenu.classList.add("hidden");
+      mobileMenu.classList.remove("flex");
+    }
+  });
 
-            canvasWrapper.style.display = "block";
+  // ---------- Password Visibility Toggle ----------
+  const passwordInput = document.getElementById("officer-password");
+  const togglePasswordBtn = document.getElementById("toggle-password");
+  const togglePasswordIcon = document.getElementById("toggle-password-icon");
+  togglePasswordBtn.addEventListener("click", () => {
+    if (passwordInput.type === "password") {
+      passwordInput.type = "text";
+      togglePasswordIcon.classList.remove("fa-eye");
+      togglePasswordIcon.classList.add("fa-eye-slash");
+    } else {
+      passwordInput.type = "password";
+      togglePasswordIcon.classList.remove("fa-eye-slash");
+      togglePasswordIcon.classList.add("fa-eye");
+    }
+  });
 
-            resolve({ ctx, naturalWidth, naturalHeight, canvasWidth, canvasHeight });
+  // ---------- Captcha Engine ----------
+  const captchaDisplay = document.getElementById("captcha-display");
+  const captchaRefreshBtn = document.getElementById("captcha-refresh");
+  const captchaRefreshIcon = document.getElementById("captcha-refresh-icon");
+  const captchaInput = document.getElementById("captcha-input");
+  let currentCaptcha = "";
 
-            URL.revokeObjectURL(objectUrl);
-        };
+  function generateCaptcha() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let result = "";
+    for (let i = 0; i < 6; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    currentCaptcha = result;
+    captchaDisplay.textContent = result;
+  }
 
-        img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error("Failed to load the selected image onto the canvas."));
-        };
+  captchaRefreshBtn.addEventListener("click", () => {
+    captchaRefreshIcon.classList.remove("spin-once");
+    void captchaRefreshIcon.offsetWidth;
+    captchaRefreshIcon.classList.add("spin-once");
+    generateCaptcha();
+    captchaInput.value = "";
+  });
 
-        img.src = objectUrl;
+  generateCaptcha();
+
+  // ---------- View Switching (Login -> Role -> Dashboard) ----------
+  const officerLoginView = document.getElementById("officer-login");
+  const roleView = document.getElementById("role-view");
+  const dashboardView = document.getElementById("dashboard-view");
+  const headerOfficerPanel = document.getElementById("header-officer-panel");
+  const headerTaglinePanel = document.getElementById("header-tagline-panel");
+  const headerOfficerId = document.getElementById("header-officer-id");
+  const headerOfficerRole = document.getElementById("header-officer-role");
+  const headerSignoutBtn = document.getElementById("header-signout-btn");
+
+  function showLoginView() {
+    officerLoginView.classList.remove("hidden");
+    officerLoginView.classList.add("flex");
+    roleView.classList.add("hidden");
+    roleView.classList.remove("flex");
+    dashboardView.classList.add("hidden");
+    headerOfficerPanel.classList.add("hidden");
+    headerTaglinePanel.classList.remove("hidden");
+  }
+
+  function showRoleView() {
+    officerLoginView.classList.add("hidden");
+    officerLoginView.classList.remove("flex");
+    roleView.classList.remove("hidden");
+    roleView.classList.add("flex");
+    dashboardView.classList.add("hidden");
+    headerOfficerPanel.classList.add("hidden");
+    headerTaglinePanel.classList.remove("hidden");
+  }
+
+  function showDashboardView(role, permissions, officerId) {
+    officerLoginView.classList.add("hidden");
+    officerLoginView.classList.remove("flex");
+    roleView.classList.add("hidden");
+    roleView.classList.remove("flex");
+    dashboardView.classList.remove("hidden");
+    headerOfficerPanel.classList.remove("hidden");
+    headerTaglinePanel.classList.add("hidden");
+    headerOfficerId.textContent = officerId || "DEMO-LMO-40812";
+    headerOfficerRole.textContent = role;
+  }
+
+  headerSignoutBtn.addEventListener("click", () => {
+    sessionStorage.removeItem("lmpc_authenticated");
+    sessionStorage.removeItem("lmpc_officer_id");
+    sessionStorage.removeItem("lmpc_role");
+    sessionStorage.removeItem("lmpc_permissions");
+    document.getElementById("officer-id").value = "";
+    passwordInput.value = "";
+    captchaInput.value = "";
+    generateCaptcha();
+    showLoginView();
+  });
+
+  // ---------- Login Form (real session logic, with captcha) ----------
+  const loginForm = document.getElementById("login-form");
+  const loginError = document.getElementById("login-error");
+  const signinBtn = document.getElementById("signin-btn");
+  const signinBtnText = document.getElementById("signin-btn-text");
+  const backBtn = document.getElementById("back-btn");
+
+  backBtn.addEventListener("click", () => {
+    document.getElementById("officer-id").value = "";
+    passwordInput.value = "";
+    captchaInput.value = "";
+    loginError.classList.add("hidden");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  loginForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    loginError.classList.add("hidden");
+    loginError.classList.remove("text-emerald-700", "bg-emerald-50", "border-emerald-200");
+    loginError.classList.add("text-red-600", "bg-red-50", "border-red-200");
+
+    const officerId = document.getElementById("officer-id").value.trim();
+    const password = passwordInput.value.trim();
+    const enteredCaptcha = captchaInput.value.trim().toUpperCase();
+
+    if (!officerId || !password) {
+      loginError.textContent = "Please enter both Officer ID and Password to continue.";
+      loginError.classList.remove("hidden");
+      return;
+    }
+
+    if (enteredCaptcha !== currentCaptcha) {
+      loginError.textContent = "Security code does not match. Please try again.";
+      loginError.classList.remove("hidden");
+      generateCaptcha();
+      captchaInput.value = "";
+      return;
+    }
+
+    signinBtn.disabled = true;
+    signinBtnText.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
+
+    setTimeout(() => {
+      signinBtn.disabled = false;
+      signinBtnText.textContent = "Sign-in";
+      sessionStorage.setItem("lmpc_authenticated", "true");
+      sessionStorage.setItem("lmpc_officer_id", officerId);
+      showRoleView();
+    }, 1000);
+  });
+
+  // ---------- Role Selection ----------
+  document.querySelectorAll(".role-option").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const role = btn.getAttribute("data-role");
+      const permissions = btn.getAttribute("data-permissions");
+      const officerId = sessionStorage.getItem("lmpc_officer_id") || "DEMO-LMO-40812";
+
+      sessionStorage.setItem("lmpc_role", role);
+      sessionStorage.setItem("lmpc_permissions", permissions);
+
+      showDashboardView(role, permissions, officerId);
     });
-}
+  });
+
+  // ---------- Session Restore ----------
+  (function restoreSession() {
+    const isAuthenticated = sessionStorage.getItem("lmpc_authenticated") === "true";
+    const savedRole = sessionStorage.getItem("lmpc_role");
+    const savedPermissions = sessionStorage.getItem("lmpc_permissions");
+    const savedOfficerId = sessionStorage.getItem("lmpc_officer_id");
+
+    if (isAuthenticated && savedRole && savedPermissions) {
+      showDashboardView(savedRole, savedPermissions, savedOfficerId);
+    } else if (isAuthenticated) {
+      showRoleView();
+    } else {
+      showLoginView();
+    }
+  })();
+
+  // ---------- Scanner State (from File A) ----------
+  const API_URL = "/api/v1/scans/init";
+  let selectedFile = null;
+
+  async function loadImageOntoCanvas(file, canvasEl) {
+    let processFile = file;
+    if (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif")) {
+      try {
+        const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.8 });
+        processFile = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
+      } catch (err) {
+        throw new Error("Could not convert HEIC image for browser display.");
+      }
+    }
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(processFile);
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 800;
+        const naturalWidth = img.naturalWidth;
+        const naturalHeight = img.naturalHeight;
+        const scale = Math.min(1, maxWidth / naturalWidth);
+        const canvasWidth = Math.round(naturalWidth * scale);
+        const canvasHeight = Math.round(naturalHeight * scale);
+        canvasEl.width = canvasWidth;
+        canvasEl.height = canvasHeight;
+        const ctx = canvasEl.getContext("2d");
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+        resolve({ ctx, naturalWidth, naturalHeight, canvasWidth, canvasHeight });
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Failed to load the selected image onto the canvas."));
+      };
+      img.src = objectUrl;
+    });
+  }
 
   function drawViolationBoxes(ctx, violations, scaleX, scaleY) {
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(255, 0, 0, 1)";
     ctx.fillStyle = "rgba(255, 0, 0, 0.15)";
-
     violations.forEach((v) => {
       if (!v.bbox || v.bbox.length !== 4) return;
       const [xMin, yMin, xMax, yMax] = v.bbox;
-
       const scaledX = xMin * scaleX;
       const scaledY = yMin * scaleY;
       const scaledW = (xMax - xMin) * scaleX;
       const scaledH = (yMax - yMin) * scaleY;
-
       ctx.fillRect(scaledX, scaledY, scaledW, scaledH);
       ctx.strokeRect(scaledX, scaledY, scaledW, scaledH);
     });
   }
 
-  function renderReport(data) {
+  function renderScanReportHtml(data) {
     const isCompliant = data.is_compliant;
     const score = data.score;
     const violations = Array.isArray(data.violations) ? data.violations : [];
 
-    statusHeader.classList.remove("pass", "fail");
-    statusHeader.classList.add(isCompliant ? "pass" : "fail");
-    statusText.textContent = isCompliant ? "PASS — Compliant" : "FAIL — Non-Compliant";
-    scoreText.textContent = "Score: " + score + " / 100";
-
-    violationsList.innerHTML = "";
-
-    if (!isCompliant && violations.length > 0) {
-      violationsSection.style.display = "block";
-      violations.forEach((v) => {
-        const li = document.createElement("li");
-
-        const fieldDiv = document.createElement("div");
-        fieldDiv.className = "violation-field";
-        fieldDiv.textContent = v.field_name || "Unknown Field";
-
-        const issueDiv = document.createElement("div");
-        issueDiv.className = "violation-issue";
-        issueDiv.textContent = v.issue || "No details provided.";
-
-        li.appendChild(fieldDiv);
-        li.appendChild(issueDiv);
-        violationsList.appendChild(li);
-      });
-    } else if (isCompliant) {
-      violationsSection.style.display = "block";
-      violationsTitle.textContent = "Violations";
-      const li = document.createElement("li");
-      li.className = "no-violations";
-      li.style.background = "transparent";
-      li.style.borderLeft = "none";
-      li.style.padding = "8px 0";
-      li.textContent = "No violations found. Label meets compliance requirements.";
-      violationsList.appendChild(li);
+    let bannerHtml = "";
+    if (isCompliant) {
+      bannerHtml = `
+        <div class="flex items-center justify-between px-4 py-3 rounded-lg mb-4 bg-emerald-50 border border-emerald-200">
+          <span class="text-emerald-700 font-extrabold text-lg">PASS — Compliant</span>
+          <span class="text-slate-600 font-semibold text-sm">Score: ${score} / 100</span>
+        </div>
+      `;
     } else {
-      violationsSection.style.display = "none";
+      bannerHtml = `
+        <div class="flex items-center justify-between px-4 py-3 rounded-lg mb-4 bg-red-50 border border-red-200">
+          <span class="text-red-700 font-extrabold text-lg">FAIL — Non-Compliant</span>
+          <span class="text-slate-600 font-semibold text-sm">Score: ${score} / 100</span>
+        </div>
+      `;
     }
 
-    report.style.display = "block";
+    let violationsHtml = "";
+    if (!isCompliant && violations.length > 0) {
+      const items = violations.map((v) => `
+        <li class="bg-red-50 border-l-4 border-red-600 p-3 mb-2 rounded">
+          <p class="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-1">${(v.field_name || "Unknown Field").replace(/</g, "&lt;")}</p>
+          <p class="text-sm text-red-600">${(v.issue || "No details provided.").replace(/</g, "&lt;")}</p>
+        </li>
+      `).join("");
+      violationsHtml = `
+        <p class="text-sm font-bold text-slate-700 mb-2">Violations Found</p>
+        <ul class="list-none p-0 m-0">${items}</ul>
+      `;
+    } else if (isCompliant) {
+      violationsHtml = `<p class="text-sm text-emerald-700 py-2">No violations found. Label meets compliance requirements.</p>`;
+    }
+
+    return `
+      <div id="scan-report-container">
+        <div class="w-full text-center mb-4">
+          <canvas id="scan-result-canvas" class="w-full max-w-full rounded shadow"></canvas>
+        </div>
+        ${bannerHtml}
+        <div id="scan-violations-section">${violationsHtml}</div>
+        <button id="scan-export-pdf-btn" class="tap-target w-full mt-4 rounded text-white font-semibold text-sm py-2" style="background:#059669;">
+          <i class="fa-solid fa-file-pdf mr-1"></i> Export Report as PDF
+        </button>
+      </div>
+    `;
   }
 
-  scanBtn.addEventListener("click", async () => {
-    if (!selectedFile) {
-      showError("Please select an image file first.");
-      return;
-    }
+  function wireScanExportPdf() {
+    const exportBtn = document.getElementById("scan-export-pdf-btn");
+    if (!exportBtn) return;
+    exportBtn.addEventListener("click", () => {
+      const target = document.getElementById("scan-report-container");
+      html2pdf().set({
+        margin: 0.5,
+        filename: 'legal-metrology-report.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+      }).from(target).save();
+    });
+  }
 
-    resetOutputs();
+  async function runRealScan(file, dropZoneRoot) {
+    dropZoneRoot.innerHTML = `
+      <div class="flex flex-col items-center justify-center py-10">
+        <i class="fa-solid fa-spinner fa-spin text-3xl text-amber-500 mb-3"></i>
+        <p class="text-sm font-semibold text-slate-600">Scanning via FastAPI...</p>
+      </div>
+    `;
 
-    const originalBtnText = scanBtn.textContent;
-    scanBtn.disabled = true;
-    scanBtn.textContent = "Scanning... Please wait";
-
+    const tempCanvas = document.createElement("canvas");
     let canvasInfo;
     try {
-      canvasInfo = await loadImageOntoCanvas(selectedFile);
+      canvasInfo = await loadImageOntoCanvas(file, tempCanvas);
     } catch (err) {
-      showError(err.message || "Could not render the selected image.");
-      scanBtn.disabled = false;
-      scanBtn.textContent = originalBtnText;
+      dropZoneRoot.innerHTML = `
+        <div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">${(err.message || "Could not render the selected image.").replace(/</g, "&lt;")}</div>
+      `;
       return;
     }
 
     const formData = new FormData();
-    formData.append("image", selectedFile);
+    formData.append("image", file);
 
     try {
       const response = await fetch(API_URL, {
         method: "POST",
+        headers: {
+          "ngrok-skip-browser-warning": "true"
+        },
         body: formData
       });
 
@@ -463,33 +758,238 @@
             detail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
           }
         } catch (parseErr) {
-          // ignore parse failure, use default detail
+          // ignore parse failure
         }
         throw new Error(detail);
       }
 
       const data = await response.json();
 
+      dropZoneRoot.innerHTML = renderScanReportHtml(data);
+
+      const finalCanvas = document.getElementById("scan-result-canvas");
+      finalCanvas.width = tempCanvas.width;
+      finalCanvas.height = tempCanvas.height;
+      const finalCtx = finalCanvas.getContext("2d");
+      finalCtx.drawImage(tempCanvas, 0, 0);
+
       const scaleX = canvasInfo.canvasWidth / canvasInfo.naturalWidth;
       const scaleY = canvasInfo.canvasHeight / canvasInfo.naturalHeight;
 
       if (data.is_compliant === false && Array.isArray(data.violations)) {
-        drawViolationBoxes(canvasInfo.ctx, data.violations, scaleX, scaleY);
+        drawViolationBoxes(finalCtx, data.violations, scaleX, scaleY);
       }
 
-      renderReport(data);
+      wireScanExportPdf();
+
+      if (typeof window.queueOfflineScan === "function" && !navigator.onLine) {
+        window.queueOfflineScan({ timestamp: Date.now(), scan_id: data.scan_id, status: "completed_offline_cache" });
+      }
 
     } catch (err) {
-      showError(
-        err && err.message
-          ? "Scan failed: " + err.message
-          : "Scan failed due to a network error. Please check your connection and try again."
-      );
-    } finally {
-      scanBtn.disabled = false;
-      scanBtn.textContent = originalBtnText;
+      dropZoneRoot.innerHTML = `
+        <div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">
+          Scan failed: ${(err && err.message ? err.message : "Network error. Please check your connection and try again.").replace(/</g, "&lt;")}
+        </div>
+      `;
     }
+  }
+
+  // ---------- Modal System ----------
+  const modalRoot = document.getElementById("modal-root");
+  const modalHeader = document.getElementById("modal-header");
+  const modalTitle = document.getElementById("modal-title");
+  const modalBody = document.getElementById("modal-body");
+  const modalClose = document.getElementById("modal-close");
+
+  const modalConfig = {
+    scan: {
+      color: "#f59e0b",
+      title: "AI Label Scan (Rule 6)",
+      body: () => `
+        <p class="text-slate-600 mb-4">Upload or drag a product label photo below. This runs a real scan against the FastAPI backend.</p>
+        <div id="drop-zone" class="border-2 border-dashed border-amber-300 rounded-lg p-8 text-center cursor-pointer hover:bg-amber-50 transition-colors">
+          <i class="fa-solid fa-cloud-arrow-up text-3xl text-amber-500 mb-2"></i>
+          <p class="text-sm font-semibold text-slate-600">Drag &amp; drop an image, or click to browse</p>
+          <input type="file" id="scan-file-input" accept="image/*" capture="environment" class="hidden">
+        </div>
+      `
+    },
+    ecommerce: {
+      color: "#059669",
+      title: "E-Commerce Listing Audit",
+      body: () => `
+        <p class="text-slate-600 mb-4">Enter a sample marketplace product URL to run a simulated declaration audit.</p>
+        <input type="text" placeholder="https://example-marketplace.demo/product/12345" class="tap-target w-full rounded border px-3 py-2 text-sm mb-3" style="background:#f9fafb; border-color:#d1d5db;">
+        <button id="ecommerce-audit-btn" class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#059669;">Run Simulated Audit</button>
+        <div id="ecommerce-result" class="hidden mt-4 text-xs bg-emerald-50 border border-emerald-200 rounded p-3 text-emerald-700">Simulated audit complete: sample listing flagged for missing Unit Sale Price declaration (demo result).</div>
+      `
+    },
+    queue: {
+      color: "#0284c7",
+      title: "Field Inspection Queue",
+      body: () => `
+        <p class="text-slate-600 mb-4">Sample assigned inspection tasks (offline-cached demo data):</p>
+        <ul class="flex flex-col gap-2 text-sm">
+          <li class="flex items-center justify-between bg-sky-50 rounded px-3 py-2"><span>Demo Godown #14 — Sector 8</span><span class="text-xs font-semibold text-sky-600">Pending</span></li>
+          <li class="flex items-center justify-between bg-sky-50 rounded px-3 py-2"><span>Demo Retail Sweep — Market Row B</span><span class="text-xs font-semibold text-sky-600">Pending</span></li>
+          <li class="flex items-center justify-between bg-emerald-50 rounded px-3 py-2"><span>Demo Retail Sweep — Market Row A</span><span class="text-xs font-semibold text-emerald-600">Completed</span></li>
+        </ul>
+      `
+    },
+    notice: {
+      color: "#2563eb",
+      title: "Show-Cause Notice Engine",
+      body: () => `
+        <p class="text-slate-600 mb-4">Generate a sample show-cause notice draft from demo violation data.</p>
+        <div class="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-slate-600 mb-4 leading-relaxed">
+          <strong>Demo Draft:</strong> Notice regarding sample violation of packaging declaration standards observed at demo location, sample reference #DEMO-2026-0091. GPS tag: 26.9124°N, 75.7873°E (sample coordinates).
+        </div>
+        <button class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#2563eb;">Download Sample Draft (Demo Only)</button>
+      `
+    },
+    register: {
+      color: "#334155",
+      title: "Demo Packer Directory",
+      body: () => `
+        <p class="text-slate-600 mb-4">Search sample registered packer/manufacturer records:</p>
+        <input type="text" placeholder="Search demo directory..." class="tap-target w-full rounded border px-3 py-2 text-sm mb-3" style="background:#f9fafb; border-color:#d1d5db;">
+        <ul class="flex flex-col gap-2 text-sm">
+          <li class="bg-slate-50 rounded px-3 py-2">Demo Packer Co. — Reg. #DEMO-PK-0021</li>
+          <li class="bg-slate-50 rounded px-3 py-2">Sample Foods Pvt. Ltd. — Reg. #DEMO-PK-0088</li>
+          <li class="bg-slate-50 rounded px-3 py-2">Fictional Traders — Reg. #DEMO-PK-0142</li>
+        </ul>
+      `
+    }
+  };
+
+  document.querySelectorAll("[data-modal]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-modal");
+      const config = modalConfig[key];
+      modalHeader.style.background = config.color;
+      modalTitle.textContent = config.title;
+      modalBody.innerHTML = config.body();
+      modalRoot.classList.remove("hidden");
+
+      if (key === "scan") {
+        const dropZone = document.getElementById("drop-zone");
+        const fileInput = document.getElementById("scan-file-input");
+
+        dropZone.addEventListener("click", () => fileInput.click());
+        dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("bg-amber-50"); });
+        dropZone.addEventListener("dragleave", () => dropZone.classList.remove("bg-amber-50"));
+        dropZone.addEventListener("drop", (e) => {
+          e.preventDefault();
+          dropZone.classList.remove("bg-amber-50");
+          const file = e.dataTransfer.files && e.dataTransfer.files[0];
+          if (file) {
+            selectedFile = file;
+            runRealScan(file, dropZone);
+          }
+        });
+        fileInput.addEventListener("change", () => {
+          const file = fileInput.files && fileInput.files[0];
+          if (file) {
+            selectedFile = file;
+            runRealScan(file, dropZone);
+          }
+        });
+      }
+
+      if (key === "ecommerce") {
+        document.getElementById("ecommerce-audit-btn").addEventListener("click", () => {
+          document.getElementById("ecommerce-result").classList.remove("hidden");
+        });
+      }
+    });
   });
+
+  modalClose.addEventListener("click", () => modalRoot.classList.add("hidden"));
+  modalRoot.addEventListener("click", (e) => {
+    if (e.target === modalRoot) modalRoot.classList.add("hidden");
+  });
+
+  // ---------- Network Status Indicator ----------
+  const networkStatus = document.getElementById("network-status");
+
+  function updateNetworkStatus() {
+    if (navigator.onLine) {
+      networkStatus.textContent = "Online - Central Cloud Connected (Demo)";
+      networkStatus.className = "text-xs font-semibold px-2 py-0.5 rounded shadow bg-emerald-100 text-emerald-700 border border-emerald-300";
+    } else {
+      networkStatus.textContent = "Offline Mode - Local Storage Active (Scans Cached)";
+      networkStatus.className = "text-xs font-semibold px-2 py-0.5 rounded shadow bg-amber-100 text-amber-700 border border-amber-300";
+    }
+    networkStatus.classList.remove("hidden");
+  }
+
+  window.addEventListener("online", updateNetworkStatus);
+  window.addEventListener("offline", updateNetworkStatus);
+  updateNetworkStatus();
+
+  // ---------- Inline Service Worker (Offline-First PWA) ----------
+  if ("serviceWorker" in navigator) {
+    const swSource = `
+      const CACHE_NAME = "lmcs-demo-cache-v1";
+      self.addEventListener("install", (event) => {
+        self.skipWaiting();
+        event.waitUntil(
+          caches.open(CACHE_NAME).then((cache) => {
+            return cache.add(self.registration.scope);
+          }).catch(() => {})
+        );
+      });
+      self.addEventListener("activate", (event) => {
+        event.waitUntil(self.clients.claim());
+      });
+      self.addEventListener("fetch", (event) => {
+        event.respondWith(
+          caches.match(event.request).then((cachedResponse) => {
+            if (cachedResponse) {
+              return cachedResponse;
+            }
+            return fetch(event.request).then((networkResponse) => {
+              return caches.open(CACHE_NAME).then((cache) => {
+                try {
+                  cache.put(event.request, networkResponse.clone());
+                } catch (e) {}
+                return networkResponse;
+              });
+            }).catch(() => {
+              return caches.match(event.request);
+            });
+          })
+        );
+      });
+    `;
+
+    try {
+      const blob = new Blob([swSource], { type: "application/javascript" });
+      const swUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(swUrl).then(() => {
+        console.log("LMCS Demo Service Worker registered (offline-first cache active).");
+      }).catch((err) => {
+        console.warn("Service worker registration skipped:", err);
+      });
+    } catch (err) {
+      console.warn("Service worker setup skipped:", err);
+    }
+  }
+
+  // ---------- LocalStorage Mock Queue for Offline Scan Caching ----------
+  function queueOfflineScan(scanRecord) {
+    try {
+      const existingQueueRaw = localStorage.getItem("lmcs_offline_scan_queue");
+      const existingQueue = existingQueueRaw ? JSON.parse(existingQueueRaw) : [];
+      existingQueue.push(scanRecord);
+      localStorage.setItem("lmcs_offline_scan_queue", JSON.stringify(existingQueue));
+    } catch (err) {
+      console.warn("Unable to queue offline scan:", err);
+    }
+  }
+
+  window.queueOfflineScan = queueOfflineScan;
 </script>
 
 </body>

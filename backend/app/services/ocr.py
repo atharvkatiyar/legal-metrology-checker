@@ -2,58 +2,116 @@ from __future__ import annotations
 
 __all__ = ["extract_text_from_image"]
 
-import os
 import base64
+import io
 import logging
+import os
+import unicodedata
+from typing import Any
 
-from openai import AsyncOpenAI
+import cv2
+import easyocr
+import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+reader = easyocr.Reader(["en", "hi"], gpu=False)
 
 
-async def extract_text_from_image(image_path: str) -> str:
-    try:
-        with open(image_path, "rb") as image_file:
-            image_bytes = image_file.read()
+def _detect_language(text: str) -> str:
+    """
+    Conservative English/Hindi classification.
 
-        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+    Devanagari letters indicate Hindi. Devanagari digits or punctuation
+    alone do not.
+    """
+    if not text:
+        return "en"
 
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1500,
-            temperature=0.0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Extract all visible text from this product label. "
-                                "Return ONLY the raw text, preserving the natural "
-                                "reading order. Do not add any conversational text."
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
+    for char in text:
+        if "\u0900" <= char <= "\u097F":
+            category = unicodedata.category(char)
+
+            # Hindi/Devanagari letters and marks, but not digits/punctuation.
+            if category.startswith("L") or category.startswith("M"):
+                return "hi"
+
+    return "en"
+
+
+def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
+    """
+    Convert EasyOCR detail=1 results to the application's token schema:
+
+    {
+        "text": string,
+        "bbox": [[x,y], [x,y], [x,y], [x,y]],
+        "confidence": float,
+        "language": "en" | "hi"
+    }
+    """
+    tokens: list[dict[str, Any]] = []
+
+    for result in results:
+        if not isinstance(result, (list, tuple)) or len(result) != 3:
+            continue
+
+        bbox, text, confidence = result
+
+        if not isinstance(text, str):
+            text = str(text)
+
+        try:
+            bbox_list = np.asarray(bbox).tolist()
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            continue
+
+        tokens.append(
+            {
+                "text": text,
+                "bbox": bbox_list,
+                "confidence": confidence_value,
+                "language": _detect_language(text),
+            }
         )
 
-        content = response.choices[0].message.content
-        if content:
-            return content.strip()
-        return ""
+    return tokens
+
+
+async def extract_text_from_image(
+    image_bytes: bytes | str,
+) -> list[dict[str, Any]]:
+    try:
+        if isinstance(image_bytes, str):
+            # router.py passes an uploaded image filesystem path.
+            if os.path.isfile(image_bytes):
+                with open(image_bytes, "rb") as f:
+                    image_bytes = f.read()
+            else:
+                # Preserve existing base64/data-URL compatibility.
+                if "," in image_bytes:
+                    image_bytes = image_bytes.split(",", 1)[1]
+                image_bytes = base64.b64decode(image_bytes)
+
+        image = Image.open(io.BytesIO(image_bytes))
+        image_array = np.array(image)
+
+        if image_array.ndim == 3 and image_array.shape[-1] == 4:
+            image_array = cv2.cvtColor(
+                image_array,
+                cv2.COLOR_RGBA2RGB,
+            )
+
+        # detail=1 preserves bbox + text + confidence.
+        results = reader.readtext(image_array, detail=1)
+
+        return _to_ocr_tokens(results)
 
     except Exception as e:
         logger.exception(
-            "Failed to extract text from image at path '%s': %s", image_path, e
+            "Failed to extract text from image bytes/path: %s",
+            e,
         )
-        return ""
+        return []
