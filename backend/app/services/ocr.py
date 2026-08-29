@@ -6,6 +6,7 @@ import base64
 import io
 import logging
 import os
+import unicodedata
 from typing import Any
 
 import cv2
@@ -20,19 +21,21 @@ reader = easyocr.Reader(["en", "hi"])
 
 def _detect_language(text: str) -> str:
     """
-    Conservative language classification for the agreed OCR schema.
+    Conservative English/Hindi classification.
 
-    EasyOCR returns bbox/text/confidence, but not a per-token language field.
-    For the current English/Hindi scope:
-      - Devanagari text -> hi
-      - otherwise -> en
+    Devanagari letters indicate Hindi. Devanagari digits or punctuation
+    alone do not.
     """
     if not text:
         return "en"
 
     for char in text:
         if "\u0900" <= char <= "\u097F":
-            return "hi"
+            category = unicodedata.category(char)
+
+            # Hindi/Devanagari letters and marks, but not digits/punctuation.
+            if category.startswith("L") or category.startswith("M"):
+                return "hi"
 
     return "en"
 
