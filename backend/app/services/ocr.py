@@ -16,7 +16,53 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-reader = easyocr.Reader(["en", "hi"])
+_reader: easyocr.Reader | None = None
+
+
+def _get_reader() -> easyocr.Reader:
+    """
+    Lazily initialize EasyOCR once.
+
+    CPU is used deliberately instead of MPS because repeated OCR
+    on large images can cause excessive memory pressure on macOS.
+    """
+    global _reader
+
+    if _reader is None:
+        _reader = easyocr.Reader(
+            ["en", "hi"],
+            gpu=False,
+            verbose=False,
+        )
+
+    return _reader
+
+
+def _resize_for_ocr(
+    image_array: np.ndarray,
+    max_dimension: int = 2000,
+) -> np.ndarray:
+    """
+    Reduce excessively large images before OCR to limit memory usage.
+    Aspect ratio is preserved.
+    """
+    height, width = image_array.shape[:2]
+
+    largest_dimension = max(height, width)
+
+    if largest_dimension <= max_dimension:
+        return image_array
+
+    scale = max_dimension / largest_dimension
+
+    new_width = max(1, int(width * scale))
+    new_height = max(1, int(height * scale))
+
+    return cv2.resize(
+        image_array,
+        (new_width, new_height),
+        interpolation=cv2.INTER_AREA,
+    )
 
 
 def _detect_language(text: str) -> str:
@@ -33,7 +79,6 @@ def _detect_language(text: str) -> str:
         if "\u0900" <= char <= "\u097F":
             category = unicodedata.category(char)
 
-            # Hindi/Devanagari letters and marks, but not digits/punctuation.
             if category.startswith("L") or category.startswith("M"):
                 return "hi"
 
@@ -93,6 +138,7 @@ async def extract_text_from_image(
                 # Preserve existing base64/data-URL compatibility.
                 if "," in image_bytes:
                     image_bytes = image_bytes.split(",", 1)[1]
+
                 image_bytes = base64.b64decode(image_bytes)
 
         image = Image.open(io.BytesIO(image_bytes))
@@ -104,8 +150,15 @@ async def extract_text_from_image(
                 cv2.COLOR_RGBA2RGB,
             )
 
+        image_array = _resize_for_ocr(image_array)
+
+        ocr_reader = _get_reader()
+
         # detail=1 preserves bbox + text + confidence.
-        results = reader.readtext(image_array, detail=1)
+        results = ocr_reader.readtext(
+            image_array,
+            detail=1,
+        )
 
         return _to_ocr_tokens(results)
 
