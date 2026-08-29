@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.services.ocr as ocr
+from app.field_mapping import map_fields
 
 
 def test_to_ocr_tokens():
@@ -56,11 +57,11 @@ def test_malformed_results_are_skipped():
 
 def test_real_image_path():
     fixture = (
-    Path(__file__).resolve().parents[2]
-    / "labeled_batch"
-    / "images"
-    / "IMG_003 (Himalaya Shampoo).jpg"
-)
+        Path(__file__).resolve().parents[2]
+        / "labeled_batch"
+        / "images"
+        / "IMG_003 (Himalaya Shampoo).jpg"
+    )
 
     assert fixture.exists(), f"Missing fixture: {fixture}"
 
@@ -81,9 +82,60 @@ def test_real_image_path():
         json.dumps(result)
 
 
+def test_ocr_tokens_are_compatible_with_field_mapping():
+    tokens = [
+        {
+            "text": "MRP ₹301",
+            "bbox": [[10, 20], [100, 20], [100, 50], [10, 50]],
+            "confidence": 0.96,
+            "language": "en",
+        },
+        {
+            "text": "Net Qty. 340 ml",
+            "bbox": [[10, 60], [130, 60], [130, 90], [10, 90]],
+            "confidence": 0.95,
+            "language": "en",
+        },
+        {
+            "text": "Manufactured by Himalaya Wellness Company",
+            "bbox": [[10, 100], [300, 100], [300, 130], [10, 130]],
+            "confidence": 0.94,
+            "language": "en",
+        },
+        {
+            "text": "Date of Manufacture 12/2025",
+            "bbox": [[10, 140], [220, 140], [220, 170], [10, 170]],
+            "confidence": 0.93,
+            "language": "en",
+        },
+        {
+            "text": "Customer Care 1-800-208-1930",
+            "bbox": [[10, 180], [250, 180], [250, 210], [10, 210]],
+            "confidence": 0.92,
+            "language": "en",
+        },
+    ]
+
+    result = map_fields(tokens)
+
+    assert isinstance(result, dict)
+
+    for key in (
+        "MRP",
+        "NET_QUANTITY",
+        "MANUFACTURER_ADDRESS",
+        "MANUFACTURING_DATE",
+        "CONSUMER_CARE",
+    ):
+        assert key in result
+
+    json.dumps(result)
+
+
 if __name__ == "__main__":
     test_to_ocr_tokens()
     test_empty_results()
     test_malformed_results_are_skipped()
     test_real_image_path()
+    test_ocr_tokens_are_compatible_with_field_mapping()
     print("OCR tests: PASS")
