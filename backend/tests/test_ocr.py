@@ -1,0 +1,86 @@
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import app.services.ocr as ocr
+
+
+def test_to_ocr_tokens():
+    results = [
+        (
+            [[10, 20], [100, 20], [100, 50], [10, 50]],
+            "MRP ₹249",
+            0.96,
+        ),
+        (
+            [[10, 60], [130, 60], [130, 90], [10, 90]],
+            "मूल्य ₹249",
+            0.91,
+        ),
+    ]
+
+    tokens = ocr._to_ocr_tokens(results)
+
+    assert len(tokens) == 2
+
+    assert tokens[0]["text"] == "MRP ₹249"
+    assert tokens[0]["bbox"] == [
+        [10, 20],
+        [100, 20],
+        [100, 50],
+        [10, 50],
+    ]
+    assert tokens[0]["confidence"] == 0.96
+    assert tokens[0]["language"] == "en"
+
+    assert tokens[1]["language"] == "hi"
+
+    json.dumps(tokens)
+
+
+def test_empty_results():
+    assert ocr._to_ocr_tokens([]) == []
+
+
+def test_malformed_results_are_skipped():
+    results = [
+        ("bad",),
+        ("too", "many", "values", "here"),
+    ]
+
+    assert ocr._to_ocr_tokens(results) == []
+
+
+def test_real_image_path():
+    fixture = Path(
+        "labeled_batch/images/IMG_003 (Himalaya Shampoo).jpg"
+    )
+
+    assert fixture.exists(), f"Missing fixture: {fixture}"
+
+    result = asyncio.run(
+        ocr.extract_text_from_image(str(fixture))
+    )
+
+    assert isinstance(result, list)
+
+    if result:
+        first = result[0]
+
+        assert isinstance(first["text"], str)
+        assert isinstance(first["bbox"], list)
+        assert isinstance(first["confidence"], float)
+        assert first["language"] in {"en", "hi"}
+
+        json.dumps(result)
+
+
+if __name__ == "__main__":
+    test_to_ocr_tokens()
+    test_empty_results()
+    test_malformed_results_are_skipped()
+    test_real_image_path()
+    print("OCR tests: PASS")
