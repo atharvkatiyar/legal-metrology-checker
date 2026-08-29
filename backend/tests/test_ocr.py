@@ -70,16 +70,16 @@ def test_real_image_path():
     )
 
     assert isinstance(result, list)
+    assert result, "Expected at least one OCR detection from the labeled image"
 
-    if result:
-        first = result[0]
+    first = result[0]
 
-        assert isinstance(first["text"], str)
-        assert isinstance(first["bbox"], list)
-        assert isinstance(first["confidence"], float)
-        assert first["language"] in {"en", "hi"}
+    assert isinstance(first["text"], str)
+    assert isinstance(first["bbox"], list)
+    assert isinstance(first["confidence"], float)
+    assert first["language"] in {"en", "hi"}
 
-        json.dumps(result)
+    json.dumps(result)
 
 
 def test_ocr_tokens_are_compatible_with_field_mapping():
