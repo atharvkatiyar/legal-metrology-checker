@@ -8,14 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
-# ---------------------------------------------------------------------------
-# Paths / configuration
-# ---------------------------------------------------------------------------
+# Make backend/ importable when running:
+# python tests/test_labeled_batch.py
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+ROOT = BACKEND_DIR.parent
 
-ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND_DIR))
 
 LABELS_PATH = ROOT / "labeled_batch" / "labels.json"
 IMAGES_DIR = ROOT / "labeled_batch" / "images"
+WORKER_PATH = Path(__file__).with_name("ocr_worker.py")
 
 FIELDS = (
     "MRP",
@@ -25,45 +27,28 @@ FIELDS = (
     "CONSUMER_CARE",
 )
 
-WORKER_PATH = Path(__file__).with_name("ocr_worker.py")
-
-# Make backend/ importable when this test is launched as:
-# python tests/test_labeled_batch.py
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-
-# ---------------------------------------------------------------------------
-# Isolated OCR execution
-# ---------------------------------------------------------------------------
 
 def run_ocr_isolated(
     image_path: Path,
-    timeout_seconds: int = 120,
+    timeout: int = 120,
 ) -> list[dict[str, Any]]:
-    """
-    Run OCR in a separate Python process.
-
-    Each image gets its own process so EasyOCR/PyTorch memory is released
-    when the worker exits. Images are processed sequentially.
-    """
+    """Run OCR in a short-lived subprocess for one image."""
     result = subprocess.run(
         [
             sys.executable,
             str(WORKER_PATH),
             str(image_path),
         ],
+        cwd=BACKEND_DIR,
         capture_output=True,
         text=True,
-        timeout=timeout_seconds,
-        cwd=ROOT / "backend",
+        timeout=timeout,
     )
 
     if result.returncode != 0:
         raise RuntimeError(
             f"OCR worker failed for {image_path.name}\n"
-            f"Return code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"{result.stderr}"
         )
 
     try:
@@ -71,58 +56,36 @@ def run_ocr_isolated(
     except json.JSONDecodeError as exc:
         raise RuntimeError(
             f"OCR worker returned invalid JSON for {image_path.name}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"stdout: {result.stdout[:500]}\n"
+            f"stderr: {result.stderr[:1000]}"
         ) from exc
 
     if not isinstance(tokens, list):
         raise RuntimeError(
-            f"OCR worker returned {type(tokens).__name__} "
-            f"for {image_path.name}; expected list"
+            f"OCR worker returned {type(tokens).__name__}; expected list"
         )
 
     return tokens
 
 
-# ---------------------------------------------------------------------------
-# Ground-truth normalization
-# ---------------------------------------------------------------------------
-
-def normalize_expected(
-    field: str,
-    value: Any,
-) -> Any:
-    """
-    Normalize labeled ground-truth values for deterministic comparison.
-
-    This function is used only by the evaluation script. It does not modify
-    application Field Mapping behavior.
-    """
+def normalize_expected(field: str, value: Any) -> Any:
+    """Normalize labeled ground-truth values for comparison."""
     if value is None:
         return None
-
-    # -----------------------------------------------------------------------
-    # MRP
-    # -----------------------------------------------------------------------
 
     if field == "MRP":
         text = str(value)
 
-        # Remove common MRP/currency labels.
         text = re.sub(
             r"(?i)\b(?:MRP|MAXIMUM\s+RETAIL\s+PRICE|RS\.?|INR)\b",
             " ",
             text,
         )
 
-        # Remove currency symbols.
         text = text.replace("₹", " ")
         text = text.replace("$", " ")
-
-        # Remove '/-' suffix.
         text = text.replace("/-", " ")
 
-        # Ground-truth data may contain OCR-style spaces inside a number:
         # "3 599.00" -> "3599.00"
         text = re.sub(
             r"(?<=\d)\s+(?=\d)",
@@ -138,41 +101,30 @@ def normalize_expected(
         if not match:
             return None
 
-        raw = match.group(0).replace(",", "")
-
         try:
-            return float(raw)
+            return float(
+                match.group(0).replace(",", "")
+            )
         except ValueError:
             return None
-
-    # -----------------------------------------------------------------------
-    # NET QUANTITY
-    # -----------------------------------------------------------------------
 
     if field == "NET_QUANTITY":
         text = str(value).lower().strip()
 
-        replacements = (
-            ("millilitres", "ml"),
-            ("milliliters", "ml"),
-            ("kilograms", "kg"),
-            ("kilogram", "kg"),
-            ("grams", "g"),
-            ("gram", "g"),
-            ("litres", "l"),
-            ("liters", "l"),
-        )
+        replacements = {
+            "millilitres": "ml",
+            "milliliters": "ml",
+            "kilograms": "kg",
+            "kilogram": "kg",
+            "grams": "g",
+            "gram": "g",
+            "litres": "l",
+            "liters": "l",
+        }
 
-        for old, new in replacements:
+        for old, new in replacements.items():
             text = text.replace(old, new)
 
-        # Find the first recognized amount + supported unit.
-        #
-        # Examples:
-        #   "340 ml" -> 340 ml
-        #   "200ml" -> 200 ml
-        #   "1.5 l" -> 1.5 l
-        #   "300ml (294.8g)" -> 300 ml
         match = re.search(
             r"(\d+(?:\.\d+)?)\s*(mg|kg|ml|g|l)\b",
             text,
@@ -186,23 +138,15 @@ def normalize_expected(
             "unit": match.group(2),
         }
 
-    # -----------------------------------------------------------------------
-    # CONSUMER CARE
-    # -----------------------------------------------------------------------
-
     if field == "CONSUMER_CARE":
         return " ".join(
             str(value).lower().split()
         )
 
-    # -----------------------------------------------------------------------
-    # MANUFACTURER / DATE
-    # -----------------------------------------------------------------------
-
-    if field in (
+    if field in {
         "MANUFACTURER_ADDRESS",
         "MANUFACTURING_DATE",
-    ):
+    }:
         return " ".join(
             str(value).lower().split()
         )
@@ -210,35 +154,21 @@ def normalize_expected(
     return value
 
 
-# ---------------------------------------------------------------------------
-# Actual Field Mapping result normalization
-# ---------------------------------------------------------------------------
-
 def normalize_actual(
     field: str,
     result: dict[str, Any],
 ) -> Any:
-    """
-    Normalize actual Field Mapping output for deterministic comparison.
-    """
+    """Normalize Field Mapping output for comparison."""
     value = result.get("value")
 
     if value is None:
         return None
-
-    # -----------------------------------------------------------------------
-    # MRP
-    # -----------------------------------------------------------------------
 
     if field == "MRP":
         try:
             return float(value)
         except (TypeError, ValueError):
             return None
-
-    # -----------------------------------------------------------------------
-    # NET QUANTITY
-    # -----------------------------------------------------------------------
 
     if field == "NET_QUANTITY":
         if not isinstance(value, dict):
@@ -263,18 +193,14 @@ def normalize_actual(
             "unit": str(unit).lower(),
         }
 
-    # -----------------------------------------------------------------------
-    # CONSUMER CARE
-    # -----------------------------------------------------------------------
-
     if field == "CONSUMER_CARE":
         if not isinstance(value, dict):
             return None
 
+        parts = []
+
         phone = value.get("phone")
         email = value.get("email")
-
-        parts: list[str] = []
 
         if phone:
             parts.append(
@@ -286,19 +212,16 @@ def normalize_actual(
                 str(email).lower()
             )
 
-        if not parts:
-            return None
+        return (
+            " / ".join(parts)
+            if parts
+            else None
+        )
 
-        return " / ".join(parts)
-
-    # -----------------------------------------------------------------------
-    # MANUFACTURER / DATE
-    # -----------------------------------------------------------------------
-
-    if field in (
+    if field in {
         "MANUFACTURER_ADDRESS",
         "MANUFACTURING_DATE",
-    ):
+    }:
         return " ".join(
             str(value).lower().split()
         )
@@ -306,21 +229,11 @@ def normalize_actual(
     return value
 
 
-# ---------------------------------------------------------------------------
-# Single-image evaluation
-# ---------------------------------------------------------------------------
-
 def evaluate_image(
     record: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Evaluate one labeled image.
-
-    OCR runs in an isolated subprocess. Field Mapping runs in the parent
-    process after the OCR worker returns its lightweight token list.
-    """
+    """OCR and map one labeled image."""
     image_name = record["image"]
-
     image_path = IMAGES_DIR / image_name
 
     if not image_path.exists():
@@ -328,20 +241,14 @@ def evaluate_image(
             f"Missing labeled image: {image_path}"
         )
 
-    # IMPORTANT:
-    # Do NOT import EasyOCR here.
-    # OCR happens entirely inside the isolated worker.
-    ocr_tokens = run_ocr_isolated(
-        image_path
-    )
+    # OCR runs only inside the isolated worker.
+    tokens = run_ocr_isolated(image_path)
 
     from app.field_mapping import map_fields
 
-    mapped = map_fields(
-        ocr_tokens
-    )
+    mapped = map_fields(tokens)
 
-    field_results: dict[str, dict[str, Any]] = {}
+    fields = {}
 
     for field in FIELDS:
         expected = normalize_expected(
@@ -354,7 +261,7 @@ def evaluate_image(
             mapped[field],
         )
 
-        field_results[field] = {
+        fields[field] = {
             "expected": expected,
             "actual": actual,
             "pass": expected == actual,
@@ -362,14 +269,10 @@ def evaluate_image(
 
     return {
         "image": image_name,
-        "ocr_token_count": len(ocr_tokens),
-        "fields": field_results,
+        "ocr_token_count": len(tokens),
+        "fields": fields,
     }
 
-
-# ---------------------------------------------------------------------------
-# Batch evaluation
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     if not LABELS_PATH.exists():
@@ -396,7 +299,7 @@ def main() -> None:
 
     if not isinstance(labels, list):
         raise ValueError(
-            "labels.json must contain a list of records"
+            "labels.json must contain a list"
         )
 
     totals = {
@@ -409,9 +312,8 @@ def main() -> None:
         for field in FIELDS
     }
 
-    failures: list[dict[str, Any]] = []
-
-    worker_failures: list[dict[str, Any]] = []
+    failures = []
+    errors = []
 
     print("=" * 72)
     print(
@@ -429,7 +331,6 @@ def main() -> None:
     )
     print()
 
-    # Process exactly one labeled image at a time.
     for index, record in enumerate(
         labels,
         start=1,
@@ -440,8 +341,8 @@ def main() -> None:
         )
 
         print(
-            f"[{index}/{len(labels)}] Processing: "
-            f"{image_name}"
+            f"[{index}/{len(labels)}] "
+            f"Processing: {image_name}"
         )
 
         try:
@@ -450,7 +351,7 @@ def main() -> None:
             )
 
         except Exception as exc:
-            worker_failures.append(
+            errors.append(
                 {
                     "image": image_name,
                     "error": str(exc),
@@ -458,10 +359,10 @@ def main() -> None:
             )
 
             print(
-                f"  [ERROR] {type(exc).__name__}: {exc}"
+                f"  [ERROR] "
+                f"{type(exc).__name__}: {exc}"
             )
             print()
-
             continue
 
         print(
@@ -477,7 +378,6 @@ def main() -> None:
             if field_result["pass"]:
                 passes[field] += 1
                 status = "PASS"
-
             else:
                 status = "FAIL"
 
@@ -496,10 +396,6 @@ def main() -> None:
 
         print()
 
-    # -----------------------------------------------------------------------
-    # Accuracy summary
-    # -----------------------------------------------------------------------
-
     print("=" * 72)
     print("FIELD ACCURACY")
     print("=" * 72)
@@ -509,7 +405,7 @@ def main() -> None:
         passed = passes[field]
 
         accuracy = (
-            (passed / total) * 100
+            100 * passed / total
             if total
             else 0.0
         )
@@ -520,7 +416,7 @@ def main() -> None:
             f"({accuracy:6.2f}%)"
         )
 
-    total_pass = sum(
+    total_passed = sum(
         passes.values()
     )
 
@@ -528,8 +424,8 @@ def main() -> None:
         totals.values()
     )
 
-    overall_accuracy = (
-        (total_pass / total_cases) * 100
+    overall = (
+        100 * total_passed / total_cases
         if total_cases
         else 0.0
     )
@@ -538,13 +434,9 @@ def main() -> None:
 
     print(
         f"{'OVERALL':24s}"
-        f"{total_pass:2d}/{total_cases:2d} "
-        f"({overall_accuracy:6.2f}%)"
+        f"{total_passed:2d}/{total_cases:2d} "
+        f"({overall:6.2f}%)"
     )
-
-    # -----------------------------------------------------------------------
-    # Field-mapping failures
-    # -----------------------------------------------------------------------
 
     print()
     print("=" * 72)
@@ -552,10 +444,7 @@ def main() -> None:
     print("=" * 72)
 
     if not failures:
-        print(
-            "No field-mapping failures."
-        )
-
+        print("No field-mapping failures.")
     else:
         for failure in failures:
             print(
@@ -572,26 +461,19 @@ def main() -> None:
             )
             print()
 
-    # -----------------------------------------------------------------------
-    # OCR worker / infrastructure failures
-    # -----------------------------------------------------------------------
-
     print("=" * 72)
     print("OCR WORKER / INFRASTRUCTURE FAILURES")
     print("=" * 72)
 
-    if not worker_failures:
-        print(
-            "No worker failures."
-        )
-
+    if not errors:
+        print("No worker failures.")
     else:
-        for failure in worker_failures:
+        for error in errors:
             print(
-                f"[ERROR] {failure['image']}"
+                f"[ERROR] {error['image']}"
             )
             print(
-                f"  Error: {failure['error']}"
+                f"  Error: {error['error']}"
             )
             print()
 
