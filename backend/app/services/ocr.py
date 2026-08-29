@@ -16,7 +16,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-reader = easyocr.Reader(["en", "hi"])
+reader = easyocr.Reader(["en", "hi"], gpu=False)
 
 
 def _detect_language(text: str) -> str:
