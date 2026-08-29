@@ -25,6 +25,7 @@ MANDATORY_FIELDS = [
     "manufacturer",
     "mfg_date",
     "consumer_care",
+    "country_of_origin",
                            # NOTE: no extractor exists yet anywhere in
                            # Field Mapping -- always flagged missing until
                            # Role 1/Role 3 add real support. Confirm with
