@@ -55,9 +55,12 @@ def test_malformed_results_are_skipped():
 
 
 def test_real_image_path():
-    fixture = Path(
-        "labeled_batch/images/IMG_003 (Himalaya Shampoo).jpg"
-    )
+    fixture = (
+    Path(__file__).resolve().parents[2]
+    / "labeled_batch"
+    / "images"
+    / "IMG_003 (Himalaya Shampoo).jpg"
+)
 
     assert fixture.exists(), f"Missing fixture: {fixture}"
 
