@@ -15,7 +15,8 @@ pillow_heif.register_heif_opener()
 
 from app.services.ocr import extract_text_from_image
 from app.field_mapping import map_fields
-from app.services.rule_engine import check_compliance, FieldMappingOutput
+from app.services.field_mapping_adapter import build_field_mapping_output
+from app.services.rule_engine import check_compliance
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
@@ -36,7 +37,7 @@ async def init_scan(
     file_extension = os.path.splitext(image.filename or "")[1] or ".jpg"
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     image_path = os.path.join(UPLOAD_DIR, unique_filename)
-        
+
     contents = await image.read()
     with open(image_path, "wb") as f:
         f.write(contents)
@@ -49,11 +50,12 @@ async def init_scan(
         os.remove(image_path)
         image_path = new_image_path
 
-    ocr_text = await extract_text_from_image(image_path)
-    if not ocr_text:
-        ocr_text = ""
-    mapping_result_dict = map_fields(ocr_text)
-    mapping_output = FieldMappingOutput(fields=mapping_result_dict)
+    ocr_tokens = await extract_text_from_image(image_path)
+    if not ocr_tokens:
+        ocr_tokens = []
+
+    mapping_result_dict = map_fields(ocr_tokens)
+    mapping_output = build_field_mapping_output(mapping_result_dict)
     compliance_result = check_compliance(mapping_output)
 
     scan_result = ScanResult(
@@ -63,7 +65,7 @@ async def init_scan(
         status="completed",
         is_compliant=compliance_result.is_compliant,
         compliance_score=compliance_result.score,
-        raw_ocr=ocr_text,
+        raw_ocr=ocr_tokens,
         extracted_fields=mapping_result_dict,
         created_at=utcnow(),
     )
@@ -76,7 +78,7 @@ async def init_scan(
                 field_name=v.field_name,
                 issue=v.issue,
                 severity=v.severity,
-                bbox=v.bbox,
+                bbox=v.bbox.model_dump() if v.bbox is not None else None,
                 legal_reference=v.legal_reference,
             )
         )
@@ -84,7 +86,6 @@ async def init_scan(
     await db.commit()
     await db.refresh(scan_result)
 
-    # 3. Return the payload to the frontend
     return {
         "scan_id": str(scan_result.id),
         "status": scan_result.status,
@@ -96,7 +97,7 @@ async def init_scan(
                 "field_name": v.field_name,
                 "issue": v.issue,
                 "severity": v.severity,
-                "bbox": v.bbox,
+                "bbox": [v.bbox.xmin, v.bbox.ymin, v.bbox.xmax, v.bbox.ymax] if v.bbox else None,
                 "legal_reference": v.legal_reference,
             }
             for v in compliance_result.violations
@@ -114,10 +115,10 @@ async def get_scan(
         .where(ScanResult.id == scan_id)
     )
     scan_result = result.scalar_one_or_none()
-    
+
     if scan_result is None:
         raise HTTPException(status_code=404, detail="Scan not found")
-        
+
     return {
         "id": str(scan_result.id),
         "product_id": str(scan_result.product_id) if scan_result.product_id else None,
