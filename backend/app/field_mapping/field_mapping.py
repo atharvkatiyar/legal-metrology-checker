@@ -249,6 +249,22 @@ AMOUNT_ONLY_RAW_RE = re.compile(
     r"[\s:]*(?P<sign>[+-])?(?P<amount_raw>\d[\d,]*(?:\.\d+)?)(?!\w)"
 )
 
+# Narrow OCR recovery for product labels where EasyOCR renders a currency
+# marker such as "R=" followed by a split decimal value:
+# "R= .301. 00" -> "301.00"
+#
+# This pattern is deliberately narrow. It is used only by the dedicated
+# MRP OCR-recovery path below and does not replace the normal currency matcher.
+OCR_MRP_SPLIT_DECIMAL_RE = re.compile(
+    r"R=\s*\.(?P<int_part>\d[\d,]*)\.\s*(?P<dec_part>\d{2})",
+    re.IGNORECASE,
+)
+
+# The normal MRP search remains bounded by WINDOW. This separate recovery
+# window is only for the exact OCR corruption handled by
+# OCR_MRP_SPLIT_DECIMAL_RE.
+OCR_MRP_RECOVERY_WINDOW = 100
+
 
 # ---------------------------------------------------------------------------
 # Net Quantity config
@@ -538,6 +554,71 @@ def extract_mrp_candidates(text: str) -> List[Candidate]:
                 if is_ocr_recovery:
                     cand.reasons.append("confidence forced 'low' (OCR recovery)")
                 candidates.append(cand)
+
+            # Narrow OCR recovery: EasyOCR can render an MRP currency/value
+            # such as "R= .301. 00". The normal MRP search window remains
+            # unchanged; this dedicated recovery path gets its own bounded
+            # extended window so OCR-corrupted values farther from the label
+            # can still be recovered without widening normal MRP matching.
+            if not found_currency_match:
+                recovery_end = min(
+                    len(text),
+                    search_start + OCR_MRP_RECOVERY_WINDOW,
+                )
+                recovery_window_text = text[search_start:recovery_end]
+
+                for ocr_match in OCR_MRP_SPLIT_DECIMAL_RE.finditer(
+                    recovery_window_text
+                ):
+                    recovered_raw = (
+                        f"{ocr_match.group('int_part')}."
+                        f"{ocr_match.group('dec_part')}"
+                    )
+                    recovered_amount = _parse_amount_token(recovered_raw)
+
+                    if recovered_amount is None:
+                        continue
+
+                    abs_start = search_start + ocr_match.start()
+                    abs_end = search_start + ocr_match.end()
+                    distance = ocr_match.start()
+                    prox = _proximity_bonus(distance)
+
+                    reasons = [
+                        f"label='{label_name}'",
+                        f"distance={distance}",
+                        "OCR split-decimal currency recovery",
+                        f"recovered numeric token '{recovered_raw}'",
+                    ]
+
+                    reason_codes = [
+                        "MRP_LABEL_MATCH",
+                        "OCR_CURRENCY_RECOVERY",
+                    ]
+
+                    candidates.append(
+                        Candidate(
+                            field="MRP",
+                            value=recovered_amount,
+                            raw_evidence=text[lm.start():abs_end],
+                            label_matched=label_name,
+                            score=round(
+                                LABEL_BASE + OCR_RECOVERY_BONUS + prox,
+                                4,
+                            ),
+                            start=lm.start(),
+                            end=abs_end,
+                            reasons=reasons,
+                            reason_codes=reason_codes,
+                            suppressed=False,
+                        )
+                    )
+
+                    # A successful OCR-recovery candidate means we should not
+                    # fall through and grab an unrelated distant number via
+                    # the amount-only fallback.
+                    found_currency_match = True
+                    break
 
             # Amount-only fallback: only when no currency-symbol match was
             # found in this label's window AND the number sits immediately
