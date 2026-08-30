@@ -259,6 +259,8 @@ NET_QTY_LABELS = [
     (r"\bNet\s*Qty\b", "Net Qty"),
     (r"\bNet\s*Weight\b", "Net Weight"),
     (r"\bNet\s*Wt\b", "Net Wt"),
+    (r"\bNet\s*Volume\b", "Net Volume"),
+    (r"\bNet\s*Vol\b", "Net Vol"),
 ]
 
 NET_QTY_NEGATIVE = [
