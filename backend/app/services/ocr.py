@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 reader = easyocr.Reader(['en', 'hi'])
 
 LOW_RES_THRESHOLD = 800  # if the shorter side is under this many pixels, upscale
+DEVANAGARI_RATIO_THRESHOLD = 0.3  # fraction of alphanumeric chars that must be Devanagari to call a line "hi"
 
 
 def _deskew(image):
-    
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
 
@@ -46,7 +46,6 @@ def _deskew(image):
 
 
 def _normalize_lighting(image):
-    
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
@@ -56,23 +55,28 @@ def _normalize_lighting(image):
 
 
 def _upscale_and_denoise(image):
-    
+    """
+    Denoising is only applied when the image was actually low-res (and got
+    upscaled). Testing showed denoising every image — including
+    already-sharp, high-res photos — slightly softened fine text edges
+    and reduced OCR confidence on clean images for no benefit.
+    """
     h, w = image.shape[:2]
     shorter_side = min(h, w)
+    is_low_res = shorter_side < LOW_RES_THRESHOLD
 
-    if shorter_side < LOW_RES_THRESHOLD:
+    if is_low_res:
         scale = LOW_RES_THRESHOLD / shorter_side
         new_w, new_h = int(w * scale), int(h * scale)
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-
-    return cv2.fastNlMeansDenoisingColored(
-        image, None, h=7, hColor=7,
-        templateWindowSize=7, searchWindowSize=21
-    )
+        image = cv2.fastNlMeansDenoisingColored(
+            image, None, h=7, hColor=7,
+            templateWindowSize=7, searchWindowSize=21
+        )
+    return image
 
 
 def _preprocess(image):
-  
     image = _upscale_and_denoise(image)
     image = _deskew(image)
     image = _normalize_lighting(image)
@@ -80,15 +84,24 @@ def _preprocess(image):
 
 
 def _detect_language(text: str) -> str:
-    
-    for ch in text:
-        if '\u0900' <= ch <= '\u097F':
-            return "hi"
-    return "en"
+    """
+    Requires a minimum proportion of Devanagari characters among the
+    alphanumeric characters in the line, rather than flagging "hi" on a
+    single stray misread digit — bilingual OCR sometimes reads Latin
+    numerals as Devanagari numerals (e.g. "24" -> "२४"), which was
+    previously enough to flip an entire English line's language tag.
+    """
+    devanagari_count = sum(1 for ch in text if '\u0900' <= ch <= '\u097F')
+    alnum_count = sum(1 for ch in text if ch.isalnum())
+
+    if alnum_count == 0:
+        return "en"
+
+    ratio = devanagari_count / alnum_count
+    return "hi" if ratio >= DEVANAGARI_RATIO_THRESHOLD else "en"
 
 
 async def extract_text_from_image(image_bytes: bytes | str) -> list[dict]:
-    
     try:
         if isinstance(image_bytes, str):
             if "," in image_bytes:
