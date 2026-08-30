@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-# Make backend/ importable when running:
-# python tests/test_labeled_batch.py
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ROOT = BACKEND_DIR.parent
 
@@ -68,8 +68,11 @@ def run_ocr_isolated(
     return tokens
 
 
-def normalize_expected(field: str, value: Any) -> Any:
-    """Normalize labeled ground-truth values for comparison."""
+def normalize_expected(
+    field: str,
+    value: Any,
+) -> Any:
+    """Normalize ground-truth values for deterministic comparison."""
     if value is None:
         return None
 
@@ -158,7 +161,7 @@ def normalize_actual(
     field: str,
     result: dict[str, Any],
 ) -> Any:
-    """Normalize Field Mapping output for comparison."""
+    """Normalize Field Mapping output for deterministic comparison."""
     value = result.get("value")
 
     if value is None:
@@ -197,7 +200,7 @@ def normalize_actual(
         if not isinstance(value, dict):
             return None
 
-        parts = []
+        parts: list[str] = []
 
         phone = value.get("phone")
         email = value.get("email")
@@ -241,14 +244,13 @@ def evaluate_image(
             f"Missing labeled image: {image_path}"
         )
 
-    # OCR runs only inside the isolated worker.
     tokens = run_ocr_isolated(image_path)
 
     from app.field_mapping import map_fields
 
     mapped = map_fields(tokens)
 
-    fields = {}
+    fields: dict[str, dict[str, Any]] = {}
 
     for field in FIELDS:
         expected = normalize_expected(
@@ -274,7 +276,141 @@ def evaluate_image(
     }
 
 
+def build_report(
+    dataset_size: int,
+    results: list[dict[str, Any]],
+    errors: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Build a machine-readable accuracy report."""
+    totals = {
+        field: 0
+        for field in FIELDS
+    }
+
+    passes = {
+        field: 0
+        for field in FIELDS
+    }
+
+    failures: list[dict[str, Any]] = []
+
+    for result in results:
+        for field in FIELDS:
+            field_result = result["fields"][field]
+
+            totals[field] += 1
+
+            if field_result["pass"]:
+                passes[field] += 1
+            else:
+                failures.append(
+                    {
+                        "image": result["image"],
+                        "field": field,
+                        "expected": field_result["expected"],
+                        "actual": field_result["actual"],
+                    }
+                )
+
+    field_report: dict[str, Any] = {}
+
+    for field in FIELDS:
+        total = totals[field]
+        passed = passes[field]
+
+        field_report[field] = {
+            "passed": passed,
+            "total": total,
+            "accuracy_percent": round(
+                100 * passed / total,
+                2,
+            ) if total else 0.0,
+        }
+
+    total_passed = sum(
+        passes.values()
+    )
+
+    total_cases = sum(
+        totals.values()
+    )
+
+    overall_accuracy = (
+        100 * total_passed / total_cases
+        if total_cases
+        else 0.0
+    )
+
+    return {
+        "generated_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "dataset_size": dataset_size,
+        "evaluated_images": len(results),
+        "error_images": len(errors),
+        "fields": field_report,
+        "overall": {
+            "passed": total_passed,
+            "total": total_cases,
+            "accuracy_percent": round(
+                overall_accuracy,
+                2,
+            ),
+        },
+        "errors": errors,
+        "failures": failures,
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Evaluate labeled OCR/Field Mapping performance "
+            "and optionally save a JSON accuracy report."
+        )
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Path for the JSON accuracy report.",
+    )
+
+    return parser.parse_args()
+
+
+def print_summary(
+    report: dict[str, Any],
+) -> None:
+    print()
+    print("=" * 72)
+    print("FIELD ACCURACY")
+    print("=" * 72)
+
+    for field in FIELDS:
+        item = report["fields"][field]
+
+        print(
+            f"{field:24s}"
+            f"{item['passed']:2d}/{item['total']:2d} "
+            f"({item['accuracy_percent']:6.2f}%)"
+        )
+
+    overall = report["overall"]
+
+    print("-" * 72)
+
+    print(
+        f"{'OVERALL':24s}"
+        f"{overall['passed']:2d}/{overall['total']:2d} "
+        f"({overall['accuracy_percent']:6.2f}%)"
+    )
+
+
 def main() -> None:
+    args = parse_args()
+
     if not LABELS_PATH.exists():
         raise FileNotFoundError(
             f"Missing labels file: {LABELS_PATH}"
@@ -302,23 +438,11 @@ def main() -> None:
             "labels.json must contain a list"
         )
 
-    totals = {
-        field: 0
-        for field in FIELDS
-    }
-
-    passes = {
-        field: 0
-        for field in FIELDS
-    }
-
-    failures = []
-    errors = []
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
 
     print("=" * 72)
-    print(
-        "AUG 29 — LABELED BATCH FIELD MAPPING EVALUATION"
-    )
+    print("AUG 30 — LABELED BATCH FIELD MAPPING EVALUATION")
     print("=" * 72)
     print(
         f"Dataset size: {len(labels)} images"
@@ -346,15 +470,15 @@ def main() -> None:
         )
 
         try:
-            result = evaluate_image(
-                record
-            )
+            result = evaluate_image(record)
 
         except Exception as exc:
             errors.append(
                 {
                     "image": image_name,
-                    "error": str(exc),
+                    "error": (
+                        f"{type(exc).__name__}: {exc}"
+                    ),
                 }
             )
 
@@ -365,30 +489,19 @@ def main() -> None:
             print()
             continue
 
+        results.append(result)
+
         print(
             f"  OCR tokens: "
             f"{result['ocr_token_count']}"
         )
 
         for field in FIELDS:
-            field_result = result["fields"][field]
-
-            totals[field] += 1
-
-            if field_result["pass"]:
-                passes[field] += 1
-                status = "PASS"
-            else:
-                status = "FAIL"
-
-                failures.append(
-                    {
-                        "image": result["image"],
-                        "field": field,
-                        "expected": field_result["expected"],
-                        "actual": field_result["actual"],
-                    }
-                )
+            status = (
+                "PASS"
+                if result["fields"][field]["pass"]
+                else "FAIL"
+            )
 
             print(
                 f"  [{status}] {field}"
@@ -396,71 +509,39 @@ def main() -> None:
 
         print()
 
-    print("=" * 72)
-    print("FIELD ACCURACY")
-    print("=" * 72)
+    report = build_report(
+        dataset_size=len(labels),
+        results=results,
+        errors=errors,
+    )
 
-    for field in FIELDS:
-        total = totals[field]
-        passed = passes[field]
+    print_summary(report)
 
-        accuracy = (
-            100 * passed / total
-            if total
-            else 0.0
+    if args.output is not None:
+        args.output.parent.mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
+        with open(
+            args.output,
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                report,
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        print()
         print(
-            f"{field:24s}"
-            f"{passed:2d}/{total:2d} "
-            f"({accuracy:6.2f}%)"
+            f"Accuracy report written to: "
+            f"{args.output}"
         )
-
-    total_passed = sum(
-        passes.values()
-    )
-
-    total_cases = sum(
-        totals.values()
-    )
-
-    overall = (
-        100 * total_passed / total_cases
-        if total_cases
-        else 0.0
-    )
-
-    print("-" * 72)
-
-    print(
-        f"{'OVERALL':24s}"
-        f"{total_passed:2d}/{total_cases:2d} "
-        f"({overall:6.2f}%)"
-    )
 
     print()
-    print("=" * 72)
-    print("FIELD-MAPPING FAILURE PATTERNS")
-    print("=" * 72)
-
-    if not failures:
-        print("No field-mapping failures.")
-    else:
-        for failure in failures:
-            print(
-                f"[FAIL] {failure['image']}"
-            )
-            print(
-                f"  Field:    {failure['field']}"
-            )
-            print(
-                f"  Expected: {failure['expected']}"
-            )
-            print(
-                f"  Actual:   {failure['actual']}"
-            )
-            print()
-
     print("=" * 72)
     print("OCR WORKER / INFRASTRUCTURE FAILURES")
     print("=" * 72)
