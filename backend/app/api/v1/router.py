@@ -2,7 +2,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,6 +20,7 @@ from app.services.ocr import extract_text_from_image
 from app.field_mapping import map_fields
 from app.services.field_mapping_adapter import build_field_mapping_output
 from app.services.rule_engine import check_compliance
+from app.services.font_size_adapter import try_check_font_size
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
@@ -33,6 +37,12 @@ async def init_scan(
     image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """
+    Main automated pipeline. Deliberately does NOT touch font-size --
+    that check requires a manual tap_point that doesn't exist at upload
+    time, so it's handled by the separate /scans/{scan_id}/font-check
+    endpoint below, called after the fact if/when a user wants it.
+    """
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_extension = os.path.splitext(image.filename or "")[1] or ".jpg"
     unique_filename = f"{uuid.uuid4()}{file_extension}"
@@ -141,4 +151,57 @@ async def get_scan(
             }
             for v in scan_result.violations
         ],
+    }
+
+
+class FontCheckRequest(BaseModel):
+    tap_x: int
+    tap_y: int
+    coin_key: str = "5_rupee"
+    net_quantity_g_or_ml: Optional[float] = None
+
+
+@router.post("/scans/{scan_id}/font-check")
+async def font_check(
+    scan_id: uuid.UUID,
+    body: FontCheckRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    OPTIONAL, separate from the main automated pipeline (see Memory.md,
+    Aug 29 entry). Requires a manually-supplied tap_point identifying the
+    reference coin's approximate location -- there is no automatic coin
+    detection yet. Never affects the scan's stored is_compliant/score;
+    returns a best-effort result or a clear "unavailable" message.
+    """
+    result = await db.execute(select(ScanResult).where(ScanResult.id == scan_id))
+    scan_result = result.scalar_one_or_none()
+
+    if scan_result is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    font_result = try_check_font_size(
+        image_path=scan_result.image_path,
+        ocr_tokens=scan_result.raw_ocr or [],
+        tap_point=(body.tap_x, body.tap_y),
+        coin_key=body.coin_key,
+        net_quantity_g_or_ml=body.net_quantity_g_or_ml,
+    )
+
+    if font_result is None:
+        return {
+            "scan_id": str(scan_id),
+            "available": False,
+            "message": (
+                "Font-size check could not be completed -- no coin "
+                "detected near the given tap point, or the image could "
+                "not be re-read. This does not affect the scan's main "
+                "compliance result."
+            ),
+        }
+
+    return {
+        "scan_id": str(scan_id),
+        "available": True,
+        "result": font_result,
     }
