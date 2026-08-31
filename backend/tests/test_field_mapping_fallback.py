@@ -1,11 +1,15 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.services.field_mapping_fallback import (
+    GEMINI_TIMEOUT_SECONDS,
     map_fields_with_fallback,
 )
 
 
-def test_regex_result_is_kept_without_gemini():
+@pytest.mark.asyncio
+async def test_regex_result_is_kept_without_gemini():
     tokens = [
         {"text": "MRP Rs. 100"},
         {"text": "Net Qty 500 g"},
@@ -18,27 +22,30 @@ def test_regex_result_is_kept_without_gemini():
             "text": "Mfg Date 01/01/2026"
         },
         {
-            "text": (
-                "Customer Care 1800-123-4567"
-            )
+            "text": "Customer Care 1800-123-4567"
         },
     ]
 
     with patch(
-        "app.services.field_mapping_fallback.extract_fields_from_image"
+        "app.services.field_mapping_fallback._call_gemini_with_timeout",
+        new=AsyncMock(),
     ) as mock_gemini:
-        result = map_fields_with_fallback(
+        result = await map_fields_with_fallback(
             tokens,
-            image_path="does-not-matter.jpg",
+            image_path="fake.jpg",
         )
 
     assert result["MRP"]["value"] == 100.0
-    assert result["NET_QUANTITY"]["value"]["amount"] == 500.0
+    assert (
+        result["NET_QUANTITY"]["value"]["amount"]
+        == 500.0
+    )
 
     mock_gemini.assert_not_called()
 
 
-def test_gemini_fills_missing_fields():
+@pytest.mark.asyncio
+async def test_gemini_fills_missing_fields():
     tokens = [
         {"text": "MRP Rs. 100"},
         {"text": "Net Qty 500 g"},
@@ -55,10 +62,12 @@ def test_gemini_fills_missing_fields():
     }
 
     with patch(
-        "app.services.field_mapping_fallback.extract_fields_from_image",
-        return_value=gemini_result,
+        "app.services.field_mapping_fallback._call_gemini_with_timeout",
+        new=AsyncMock(
+            return_value=gemini_result
+        ),
     ) as mock_gemini:
-        result = map_fields_with_fallback(
+        result = await map_fields_with_fallback(
             tokens,
             image_path="fake.jpg",
         )
@@ -79,34 +88,71 @@ def test_gemini_fills_missing_fields():
     )
 
     assert result["MRP"]["value"] == 100.0
-    assert result["NET_QUANTITY"]["value"]["amount"] == 500.0
+
+    assert (
+        result["NET_QUANTITY"]["value"]["amount"]
+        == 500.0
+    )
 
     mock_gemini.assert_called_once_with(
         "fake.jpg"
     )
 
 
-def test_gemini_failure_keeps_regex_result():
+@pytest.mark.asyncio
+async def test_gemini_failure_keeps_regex_result():
     tokens = [
         {"text": "MRP Rs. 100"},
         {"text": "Net Qty 500 g"},
     ]
 
     with patch(
-        "app.services.field_mapping_fallback.extract_fields_from_image",
-        side_effect=Exception(
-            "Gemini unavailable"
+        "app.services.field_mapping_fallback._call_gemini_with_timeout",
+        new=AsyncMock(
+            side_effect=Exception(
+                "Gemini unavailable"
+            )
         ),
     ):
-        result = map_fields_with_fallback(
+        result = await map_fields_with_fallback(
             tokens,
             image_path="fake.jpg",
         )
 
     assert result["MRP"]["value"] == 100.0
-    assert result["NET_QUANTITY"]["value"]["amount"] == 500.0
+
+    assert (
+        result["NET_QUANTITY"]["value"]["amount"]
+        == 500.0
+    )
 
     assert (
         result["MANUFACTURER_ADDRESS"]["value"]
         is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_timeout_keeps_regex_result():
+    tokens = [
+        {"text": "MRP Rs. 100"},
+        {"text": "Net Qty 500 g"},
+    ]
+
+    with patch(
+        "app.services.field_mapping_fallback._call_gemini_with_timeout",
+        new=AsyncMock(
+            side_effect=TimeoutError()
+        ),
+    ):
+        result = await map_fields_with_fallback(
+            tokens,
+            image_path="fake.jpg",
+        )
+
+    assert result["MRP"]["value"] == 100.0
+
+    assert (
+        result["NET_QUANTITY"]["value"]["amount"]
+        == 500.0
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -11,7 +12,6 @@ from app.services.gemini_service import (
 
 logger = logging.getLogger(__name__)
 
-
 SUPPORTED_FIELDS = (
     "MRP",
     "NET_QUANTITY",
@@ -20,16 +20,15 @@ SUPPORTED_FIELDS = (
     "CONSUMER_CARE",
 )
 
+GEMINI_TIMEOUT_SECONDS = 12.0
+
 
 def _is_missing_regex_result(
     field_result: Optional[Dict[str, Any]],
 ) -> bool:
     """
-    Decide whether the deterministic Field Mapping result failed to
-    produce a usable value.
-
-    Only genuinely missing/none results trigger the LLM fallback.
-    Existing regex results are never overwritten here.
+    Return True when deterministic Field Mapping did not produce
+    a usable value.
     """
     if not isinstance(field_result, dict):
         return True
@@ -39,29 +38,22 @@ def _is_missing_regex_result(
     if value is None:
         return True
 
-    confidence = field_result.get(
-        "confidence",
-        "none",
-    )
-
-    return confidence == "none"
+    return field_result.get("confidence", "none") == "none"
 
 
 def _missing_fields(
     mapping_result: Dict[str, Any],
 ) -> List[str]:
     """
-    Return only fields that the regex mapper failed to resolve.
+    Return fields unresolved by deterministic Field Mapping.
     """
-    missing: List[str] = []
-
-    for field_name in SUPPORTED_FIELDS:
+    return [
+        field_name
+        for field_name in SUPPORTED_FIELDS
         if _is_missing_regex_result(
             mapping_result.get(field_name)
-        ):
-            missing.append(field_name)
-
-    return missing
+        )
+    ]
 
 
 def _merge_gemini_fallback(
@@ -70,17 +62,14 @@ def _merge_gemini_fallback(
     missing_fields: List[str],
 ) -> Dict[str, Any]:
     """
-    Fill only fields that regex failed to resolve.
+    Fill only fields that deterministic Field Mapping did not resolve.
 
-    Gemini is never allowed to overwrite a successful deterministic
-    extraction.
+    Successful deterministic results are never overwritten by Gemini.
     """
     merged = dict(mapping_result)
 
     for field_name in missing_fields:
-        gemini_value = gemini_result.get(
-            field_name
-        )
+        gemini_value = gemini_result.get(field_name)
 
         if gemini_value is None:
             continue
@@ -90,9 +79,7 @@ def _merge_gemini_fallback(
         if not isinstance(existing, dict):
             continue
 
-        existing_value = existing.get("value")
-
-        if existing_value is not None:
+        if existing.get("value") is not None:
             continue
 
         existing["value"] = gemini_value
@@ -118,7 +105,25 @@ def _merge_gemini_fallback(
     return merged
 
 
-def map_fields_with_fallback(
+async def _call_gemini_with_timeout(
+    image_path: str,
+) -> Dict[str, Any]:
+    """
+    Run the synchronous Gemini client in a worker thread so the FastAPI
+    event loop is not blocked.
+
+    Timeout is applied at the async boundary.
+    """
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            extract_fields_from_image,
+            image_path,
+        ),
+        timeout=GEMINI_TIMEOUT_SECONDS,
+    )
+
+
+async def map_fields_with_fallback(
     ocr_input: Any,
     image_path: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -126,21 +131,19 @@ def map_fields_with_fallback(
     Regex-first Field Mapping with optional Gemini fallback.
 
     Flow:
-        1. Run deterministic Field Mapping.
-        2. Identify unresolved fields.
-        3. If all fields are resolved, return immediately.
-        4. If unresolved fields exist and image_path is supplied,
-           call Gemini.
-        5. Fill only unresolved fields.
-        6. If Gemini fails, return the original regex result.
+        1. Run deterministic regex Field Mapping.
+        2. Detect unresolved fields.
+        3. Return immediately if everything is resolved.
+        4. Return immediately if no image is available for Gemini.
+        5. Call Gemini asynchronously in a worker thread.
+        6. Abort the Gemini attempt after the configured timeout.
+        7. Fill only fields that regex failed to resolve.
+        8. On any Gemini failure, preserve the deterministic result.
 
-    The function is deliberately fail-safe:
-    Gemini is an optional enhancement and never becomes a hard
-    dependency for deterministic Field Mapping.
+    Gemini is therefore an optional enhancement and never a hard
+    dependency for the pipeline.
     """
-    mapping_result = map_fields(
-        ocr_input
-    )
+    mapping_result = map_fields(ocr_input)
 
     missing_fields = _missing_fields(
         mapping_result
@@ -153,9 +156,17 @@ def map_fields_with_fallback(
         return mapping_result
 
     try:
-        gemini_result = extract_fields_from_image(
+        gemini_result = await _call_gemini_with_timeout(
             image_path
         )
+
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Gemini fallback timed out after %.1f seconds; "
+            "returning deterministic Field Mapping result",
+            GEMINI_TIMEOUT_SECONDS,
+        )
+        return mapping_result
 
     except (
         GeminiExtractionError,
@@ -175,10 +186,7 @@ def map_fields_with_fallback(
         )
         return mapping_result
 
-    if not isinstance(
-        gemini_result,
-        dict,
-    ):
+    if not isinstance(gemini_result, dict):
         return mapping_result
 
     return _merge_gemini_fallback(
@@ -190,5 +198,6 @@ def map_fields_with_fallback(
 
 __all__ = [
     "SUPPORTED_FIELDS",
+    "GEMINI_TIMEOUT_SECONDS",
     "map_fields_with_fallback",
 ]

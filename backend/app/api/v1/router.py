@@ -21,7 +21,7 @@ import pillow_heif
 pillow_heif.register_heif_opener()
 
 from app.services.ocr import extract_text_from_image
-from app.field_mapping import map_fields
+from app.services.field_mapping_fallback import map_fields_with_fallback
 from app.services.field_mapping_adapter import build_field_mapping_output
 from app.services.rule_engine import check_compliance
 from app.services.font_size_adapter import try_check_font_size
@@ -137,9 +137,10 @@ async def init_scan(
     # Field Mapping
     # ------------------------------------------------------------------
 
-    mapping_result_dict = map_fields(
-        ocr_tokens
-    )
+    mapping_result_dict = await map_fields_with_fallback(
+        ocr_tokens,
+        image_path=image_path,
+)
 
     mapping_output = build_field_mapping_output(
         mapping_result_dict
