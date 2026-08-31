@@ -28,3 +28,12 @@ app.add_middleware(
 )
 
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+from fastapi.responses import FileResponse
+import os
+
+# This tells FastAPI: "When someone visits the home page (/), send them my index.html file"
+@app.get("/")
+async def serve_frontend():
+    # Adjust this path based on where your frontend folder is located relative to main.py
+    frontend_path = os.path.join(os.path.dirname(__file__), "../../frontend/index.html")
+    return FileResponse(frontend_path)
