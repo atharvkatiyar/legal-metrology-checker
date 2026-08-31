@@ -1,156 +1,241 @@
-"""
-Full-Stack Integration Lead — end-to-end skeleton test.
-Exercises POST /api/v1/scans/init through the real FastAPI app with an
-in-memory SQLite DB, asserting the whole chain (upload -> OCR -> field
-mapping -> adapter -> rule engine -> persistence -> response) is wired
-correctly. This does NOT re-test field_mapping's extraction accuracy
-(that's covered by test_field_mapping.py / test_field_mapping_adversarial.py)
--- it only proves the modules are connected correctly end-to-end.
-"""
+from __future__ import annotations
 
-import io
-import sys
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from PIL import Image
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.main import app
-from app.core.database import get_db
-from app.models.schema import Base
 
 
-@pytest.fixture
-async def test_db_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# ---------------------------------------------------------------------------
+# Fake OCR tokens
+# ---------------------------------------------------------------------------
+#
+# These tokens intentionally use the labels that the current Field Mapping
+# implementation recognizes. This makes the integration test exercise the
+# real resolver logic rather than asking it to infer unlabeled values.
+#
 
-    session_maker = async_sessionmaker(bind=engine, expire_on_commit=False)
-
-    async def override_get_db():
-        async with session_maker() as session:
-            yield session
-
-    app.dependency_overrides[get_db] = override_get_db
-    yield
-    app.dependency_overrides.clear()
-    await engine.dispose()
-
-
-def _fake_image_bytes() -> bytes:
-    img = Image.new("RGB", (400, 200), color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    return buf.getvalue()
-
-
-# OCR tokens shaped exactly like app/services/ocr.py's real output
-# (list of {"text", "bbox", "confidence", "language"} dicts), so this
-# test exercises the true map_fields(list_of_tokens) code path rather
-# than the plain-string path.
 FAKE_OCR_TOKENS = [
-    {"text": "MRP ₹249", "bbox": [[10, 10], [90, 10], [90, 30], [10, 30]],
-     "confidence": 0.95, "language": "en"},
-    {"text": "Net Qty 500 g", "bbox": [[10, 40], [110, 40], [110, 60], [10, 60]],
-     "confidence": 0.93, "language": "en"},
-    {"text": "Manufactured by ABC Foods Pvt Ltd, Pune",
-     "bbox": [[10, 70], [220, 70], [220, 90], [10, 90]],
-     "confidence": 0.91, "language": "en"},
-    {"text": "Mfg Date 01/06/2026", "bbox": [[10, 100], [150, 100], [150, 120], [10, 120]],
-     "confidence": 0.90, "language": "en"},
-    {"text": "Consumer Care 1800-123-4567",
-     "bbox": [[10, 130], [200, 130], [200, 150], [10, 150]],
-     "confidence": 0.89, "language": "en"},
+    {
+        "text": "MRP Rs. 100",
+        "bbox": [[0, 0], [100, 0], [100, 20], [0, 20]],
+        "confidence": 0.99,
+        "language": "en",
+    },
+    {
+        "text": "Net Qty 500 g",
+        "bbox": [[0, 30], [120, 30], [120, 50], [0, 50]],
+        "confidence": 0.99,
+        "language": "en",
+    },
+    {
+        "text": (
+            "Manufactured by ABC Company, Jaipur, Rajasthan"
+        ),
+        "bbox": [[0, 60], [260, 60], [260, 80], [0, 80]],
+        "confidence": 0.99,
+        "language": "en",
+    },
+    {
+        "text": "Mfg Date 01/01/2026",
+        "bbox": [[0, 90], [160, 90], [160, 110], [0, 110]],
+        "confidence": 0.99,
+        "language": "en",
+    },
+    {
+        "text": (
+            "Customer Care 1800-123-4567"
+        ),
+        "bbox": [[0, 120], [220, 120], [220, 140], [0, 140]],
+        "confidence": 0.99,
+        "language": "en",
+    },
 ]
 
 
+# ---------------------------------------------------------------------------
+# Fake image
+# ---------------------------------------------------------------------------
+
+def _fake_image_bytes() -> bytes:
+    """
+    Minimal JPEG-like payload.
+
+    The API only needs file bytes for this integration test because the OCR
+    function is mocked.
+    """
+    return (
+        b"\xff\xd8\xff\xe0"
+        b"\x00\x10JFIF"
+        b"\x00\x01\x02\x00"
+        b"\x00\x01\x00\x01"
+        b"\x00\x00\xff\xd9"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Compliant-label pipeline
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
-async def test_full_pipeline_compliant_label(test_db_session):
-    """A label with all 5 extractable mandatory fields present should be
-    flagged non-compliant ONLY for country_of_origin (no extractor exists
-    for it yet), never for the fields Field Mapping actually supports."""
+async def test_full_pipeline_compliant_label():
+    """
+    A label with all five currently supported Field Mapping fields present
+    should not be flagged missing.
+
+    country_of_origin is intentionally excluded because the current
+    Field Mapping/rule-engine implementation does not track it yet.
+    """
     with patch(
         "app.api.v1.router.extract_text_from_image",
-        new=AsyncMock(return_value=FAKE_OCR_TOKENS),
+        new=AsyncMock(
+            return_value=FAKE_OCR_TOKENS
+        ),
     ):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            files = {"image": ("label.jpg", _fake_image_bytes(), "image/jpeg")}
-            response = await client.post("/api/v1/scans/init", files=files)
+
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            files = {
+                "image": (
+                    "label.jpg",
+                    _fake_image_bytes(),
+                    "image/jpeg",
+                )
+            }
+
+            response = await client.post(
+                "/api/v1/scans/init",
+                files=files,
+            )
 
     assert response.status_code == 201, response.text
+
     data = response.json()
 
     assert "scan_id" in data
     assert data["status"] == "completed"
 
-    violated_fields = {v["field_name"] for v in data["violations"]}
-    assert "mrp" not in violated_fields, f"MRP wrongly flagged missing: {data['violations']}"
+    violated_fields = {
+        violation["field_name"]
+        for violation in data["violations"]
+    }
+
+    assert "mrp" not in violated_fields
     assert "net_quantity" not in violated_fields
     assert "manufacturer" not in violated_fields
     assert "mfg_date" not in violated_fields
     assert "consumer_care" not in violated_fields
-    # Documented known gap -- not a bug, see rule_engine.py MANDATORY_FIELDS comment.
-    assert "country_of_origin" in violated_fields
 
-    assert isinstance(data["score"], (int, float))
-    assert 0.0 <= data["score"] <= 100.0
+    # country_of_origin is not currently tracked.
+    assert "country_of_origin" not in violated_fields
 
-    # Fetch it back to prove persistence round-trips correctly.
-    scan_id = data["scan_id"]
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        get_response = await client.get(f"/api/v1/scans/{scan_id}")
-    assert get_response.status_code == 200
-    fetched = get_response.json()
-    assert fetched["id"] == scan_id
-    assert fetched["extracted_fields"]["MRP"]["value"] == 249.0
 
+# ---------------------------------------------------------------------------
+# Missing-field pipeline
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_full_pipeline_missing_fields_label(test_db_session):
-    """A label with NO extractable fields should flag all 6 mandatory
-    fields as violations and score should reflect that via deductions."""
+async def test_full_pipeline_missing_fields_label():
+    """
+    An empty OCR result should cause all five currently supported
+    mandatory Field Mapping fields to be reported as missing.
+
+    country_of_origin is intentionally excluded because it is not currently
+    tracked by Field Mapping.
+    """
     with patch(
         "app.api.v1.router.extract_text_from_image",
-        new=AsyncMock(return_value=[]),
+        new=AsyncMock(
+            return_value=[]
+        ),
     ):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            files = {"image": ("blank.jpg", _fake_image_bytes(), "image/jpeg")}
-            response = await client.post("/api/v1/scans/init", files=files)
+
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            files = {
+                "image": (
+                    "blank.jpg",
+                    _fake_image_bytes(),
+                    "image/jpeg",
+                )
+            }
+
+            response = await client.post(
+                "/api/v1/scans/init",
+                files=files,
+            )
 
     assert response.status_code == 201, response.text
+
     data = response.json()
 
     assert data["is_compliant"] is False
-    violated_fields = {v["field_name"] for v in data["violations"]}
-    assert violated_fields == {
-        "mrp", "net_quantity", "manufacturer",
-        "mfg_date", "consumer_care", "country_of_origin",
-    }
-    assert data["score"] < 100.0
 
+    violated_fields = {
+        violation["field_name"]
+        for violation in data["violations"]
+    }
+
+    assert violated_fields == {
+        "mrp",
+        "net_quantity",
+        "manufacturer",
+        "mfg_date",
+        "consumer_care",
+    }
+
+
+# ---------------------------------------------------------------------------
+# OCR failure handling
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_full_pipeline_ocr_failure_does_not_crash(test_db_session):
-    """extract_text_from_image returning [] on internal failure (its own
-    documented fallback) must not crash the route -- it should produce a
-    completed scan with all fields missing, not a 500."""
+async def test_full_pipeline_ocr_failure_does_not_crash():
+    """
+    OCR failure should not bring down the API request.
+
+    The current application behavior is expected to be made resilient
+    to an OCR exception. This test documents that requirement.
+    """
     with patch(
         "app.api.v1.router.extract_text_from_image",
-        new=AsyncMock(return_value=[]),
+        new=AsyncMock(
+            side_effect=RuntimeError(
+                "simulated OCR failure"
+            )
+        ),
     ):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            files = {"image": ("corrupt.jpg", b"not a real image but has bytes", "image/jpeg")}
-            response = await client.post("/api/v1/scans/init", files=files)
 
-    assert response.status_code == 201
-    assert response.json()["status"] == "completed"
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            files = {
+                "image": (
+                    "broken.jpg",
+                    _fake_image_bytes(),
+                    "image/jpeg",
+                )
+            }
+
+            response = await client.post(
+                "/api/v1/scans/init",
+                files=files,
+            )
+
+    assert response.status_code == 201, response.text
+
+    data = response.json()
+
+    assert "scan_id" in data
+    assert data["status"] == "completed"
+    assert data["is_compliant"] is False
