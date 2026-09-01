@@ -43,6 +43,15 @@ def normalize_text(text: str) -> str:
     t = re.sub(r"\bM\s*\.?\s*R\s*\.?\s*P\.?\b", "MRP", t, flags=re.IGNORECASE)
     t = re.sub(r"\bNet\s*Qty\.?\b", "Net Qty", t, flags=re.IGNORECASE)
     t = re.sub(r"\bNet\s*Wt\.?\b", "Net Wt", t, flags=re.IGNORECASE)
+
+    # Common OCR normalization observed in real packaged-label scans.
+    t = t.translate(str.maketrans("०१२३४५६७८९", "0123456789"))
+    t = t.replace("ः", ":").replace("：", ":")
+    t = re.sub(r"\bManuractured\b", "Manufactured", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bconlact\b", "contact", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bCuslomer\b", "Customer", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bNet\s*Vol\.?\b", "Net Qty", t, flags=re.IGNORECASE)
+
     t = re.sub(r"\bRs\s*\.\s*", "Rs ", t, flags=re.IGNORECASE)
     return t.strip()
 
@@ -102,6 +111,24 @@ def _normalize_text_with_map(text: str):
     t, m = _sub_with_map(r"\bM\s*\.?\s*R\s*\.?\s*P\.?\b", "MRP", t, m, flags=re.IGNORECASE)
     t, m = _sub_with_map(r"\bNet\s*Qty\.?\b", "Net Qty", t, m, flags=re.IGNORECASE)
     t, m = _sub_with_map(r"\bNet\s*Wt\.?\b", "Net Wt", t, m, flags=re.IGNORECASE)
+
+    for source, replacement in {
+        "०": "0", "१": "1", "२": "2", "३": "3", "४": "4",
+        "५": "5", "६": "6", "७": "7", "८": "8", "९": "9",
+    }.items():
+        t, m = _sub_with_map(re.escape(source), replacement, t, m)
+
+    for source, replacement in (("ः", ":"), ("：", ":")):
+        t, m = _sub_with_map(re.escape(source), replacement, t, m)
+
+    for pattern, replacement in (
+        (r"\bManuractured\b", "Manufactured"),
+        (r"\bconlact\b", "contact"),
+        (r"\bCuslomer\b", "Customer"),
+        (r"\bNet\s*Vol\.?\b", "Net Qty"),
+    ):
+        t, m = _sub_with_map(pattern, replacement, t, m, flags=re.IGNORECASE)
+
     t, m = _sub_with_map(r"\bRs\s*\.\s*", "Rs ", t, m, flags=re.IGNORECASE)
     # mirror t.strip()
     lstripped = t.lstrip()
@@ -259,6 +286,7 @@ NET_QTY_LABELS = [
     (r"\bNet\s*Qty\b", "Net Qty"),
     (r"\bNet\s*Weight\b", "Net Weight"),
     (r"\bNet\s*Wt\b", "Net Wt"),
+    (r"\bNet\s*Vol\b", "Net Vol"),
 ]
 
 NET_QTY_NEGATIVE = [
@@ -1021,6 +1049,7 @@ _DATE_DMY4_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})\b")
 _DATE_YMD_RE = re.compile(r"\b(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\b")
 _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
 _DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
+_DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
 MFG_DATE_WINDOW = 40
 
@@ -1048,6 +1077,12 @@ def _normalize_date(kind: str, groups) -> Optional[str]:
             y = int(groups[2])
             if y < 100:
                 y += 2000
+        elif kind == "my4":
+            mo = int(groups[0])
+            y = int(groups[1])
+            if not 1 <= mo <= 12:
+                return None
+            return f"{y:04d}-{mo:02d}"
         else:
             return None
     except (ValueError, IndexError, TypeError):
@@ -1079,6 +1114,10 @@ def _find_date_candidates_in_window(window_text: str):
         if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
             continue
         found.append((m.start(), m.end(), "dmy2", m.groups()))
+    for m in _DATE_MY_RE.finditer(window_text):
+        if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
+            continue
+        found.append((m.start(), m.end(), "my4", m.groups()))
     found.sort(key=lambda f: f[0])
     return found
 
@@ -1122,7 +1161,7 @@ def extract_mfg_date_candidates(text: str) -> List[Candidate]:
                 reason_codes.append("MALFORMED_DATE_REJECTED")
                 suppressed = True
 
-            score = 0.95 if kind in ("dmy4", "ymd", "dmonY") else 0.6  # dmy2 stays lower-confidence
+            score = 0.95 if kind in ("dmy4", "ymd", "dmonY") else 0.6  # dmy2 and month/year stay lower-confidence
 
             candidates.append(Candidate(
                 field="MANUFACTURING_DATE", value=iso_value,
@@ -1168,7 +1207,7 @@ _PHONE_RE = re.compile(
 )
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 
-CONSUMER_CARE_WINDOW = 60
+CONSUMER_CARE_WINDOW = 180
 
 
 def extract_consumer_care_candidates(text: str) -> List[Candidate]:
