@@ -39,7 +39,10 @@ def _is_missing_regex_result(
     if value is None:
         return True
 
-    return field_result.get("confidence", "none") == "none"
+    # Low-confidence deterministic results are considered unresolved.
+    # Gemini may validate/replace them, while high-confidence regex results
+    # remain protected from overwrite.
+    return field_result.get("confidence", "none") in {"none", "low"}
 
 
 def _missing_fields(
@@ -350,7 +353,11 @@ def _merge_gemini_fallback(
         if not isinstance(existing, dict):
             continue
 
-        if existing.get("value") is not None:
+        existing_confidence = existing.get("confidence", "none")
+
+        # Never overwrite a strong deterministic extraction. Gemini may
+        # replace only missing/low-confidence deterministic results.
+        if existing.get("value") is not None and existing_confidence not in {"none", "low"}:
             continue
 
         existing["value"] = normalized_value

@@ -186,3 +186,31 @@ async def test_gemini_timeout_keeps_regex_result():
 
 def test_gemini_timeout_is_60_seconds():
     assert GEMINI_TIMEOUT_SECONDS == 60.0
+
+
+@pytest.mark.asyncio
+async def test_gemini_can_replace_low_confidence_regex_result():
+    tokens = [
+        {"text": "Mfg Date 1/2023"},
+    ]
+
+    gemini_result = {
+        "MRP": None,
+        "NET_QUANTITY": None,
+        "MANUFACTURER_ADDRESS": None,
+        "MANUFACTURING_DATE": "12/2025",
+        "CONSUMER_CARE": None,
+    }
+
+    with patch(
+        "app.services.field_mapping_fallback._call_gemini_with_timeout",
+        new=AsyncMock(return_value=gemini_result),
+    ) as mock_gemini:
+        result = await map_fields_with_fallback(
+            tokens,
+            image_path="fake.jpg",
+        )
+
+    assert result["MANUFACTURING_DATE"]["value"] == "2025-12"
+    assert result["MANUFACTURING_DATE"]["method"] == "llm"
+    mock_gemini.assert_called_once_with("fake.jpg")
