@@ -113,6 +113,33 @@ async def health_check() -> dict:
     }
 
 
+@router.get("/scans/history")
+async def get_scan_history(
+    limit: int = 25, 
+    offset: int = 0, 
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Retrieves past inspection records from the local SQLite ledger.
+    Satisfies SIH Requirement: 'Search and retrieval facility for previously scanned products'.
+    """
+    query = select(ScanResult).order_by(ScanResult.created_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    scans = result.scalars().all()
+
+    items = []
+    for scan in scans:
+        items.append({
+            "id": str(scan.id),
+            "created_at": scan.created_at.isoformat(),
+            "is_compliant": scan.is_compliant,
+            "compliance_score": scan.compliance_score,
+            "product_id": str(scan.product_id) if scan.product_id else "Unregistered Product"
+        })
+
+    return {"items": items}
+
+
 @router.post(
     "/scans/init",
     status_code=status.HTTP_201_CREATED,
