@@ -1,4 +1,3 @@
-
 """
 Rule Engine & Compliance Logic (Role 4)
 
@@ -51,7 +50,6 @@ PRESENCE_SEVERITY = {
     "manufacturer": "critical",
     "mfg_date": "major",
     "consumer_care": "major",
-    
 }
 
 
@@ -155,15 +153,15 @@ def check_compliance(mapping_output: FieldMappingOutput) -> ComplianceResult:
     )
 
 
-# --- Quick manual test with mock data ---
+# --- Quick manual test with real labeled_batch data (Nescafé sample) ---
 if __name__ == "__main__":
     mock_fields = {
         "mrp": ExtractedField(
             field_name="mrp",
-            raw_value="₹45 (Inclusive of all taxes)",
-            normalized_value=45.0,
+            raw_value="MRP ₹10.00",
+            normalized_value=10.0,
             bbox=BBox(xmin=10.0, ymin=20.0, xmax=100.0, ymax=50.0),
-            confidence=0.92,
+            confidence=0.9,
             method="regex",
         ),
         "net_quantity": ExtractedField(
@@ -173,6 +171,30 @@ if __name__ == "__main__":
             bbox=None,
             confidence=0.0,
             method="none",
+        ),
+        "manufacturer": ExtractedField(
+            field_name="manufacturer",
+            raw_value="NESTLÉ INDIA LTD., KIADB INDUSTRIAL AREA, NANJANGUD, MYSORE, (KARNATAKA) - 571 302",
+            normalized_value=None,
+            bbox=None,
+            confidence=0.9,
+            method="regex",
+        ),
+        "mfg_date": ExtractedField(
+            field_name="mfg_date",
+            raw_value="FEB/26",
+            normalized_value=None,
+            bbox=None,
+            confidence=0.85,
+            method="regex",
+        ),
+        "consumer_care": ExtractedField(
+            field_name="consumer_care",
+            raw_value="1800 103 1947 / WECARE@IN.NESTLE.COM",
+            normalized_value=None,
+            bbox=None,
+            confidence=0.9,
+            method="regex",
         ),
     }
 
