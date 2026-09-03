@@ -1,3 +1,4 @@
+
 """
 Rule Engine & Compliance Logic (Role 4)
 
@@ -25,12 +26,15 @@ MANDATORY_FIELDS = [
     "manufacturer",
     "mfg_date",
     "consumer_care",
-    "country_of_origin",
-                           # NOTE: no extractor exists yet anywhere in
-                           # Field Mapping -- always flagged missing until
-                           # Role 1/Role 3 add real support. Confirm with
-                           # them whether this stays in scope for Sep 8.
 ]
+
+# country_of_origin is intentionally excluded from MANDATORY_FIELDS.
+# It's only legally required for IMPORTED products, not universal --
+# and Role 1's labeled_batch/ dataset doesn't track it at all yet.
+# Re-add it once:
+#   1. Field Mapping starts extracting it, AND
+#   2. We know how to determine whether a given product is imported
+# Confirmed with team: still pending as of Aug 31.
 
 SEVERITY_DEDUCTIONS = {
     "critical": 30,
@@ -47,7 +51,7 @@ PRESENCE_SEVERITY = {
     "manufacturer": "critical",
     "mfg_date": "major",
     "consumer_care": "major",
-    "country_of_origin": "major",
+    
 }
 
 
