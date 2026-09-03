@@ -1,0 +1,61 @@
+{
+  "rules": [
+    {
+      "rule_id": "RULE_6_1_A",
+      "clause": "Rule 6(1)(a)",
+      "field": "manufacturer",
+      "description": "Name and complete address of the manufacturer / packer / importer",
+      "mandatory": true,
+      "severity": "HIGH",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "RULE_6_1_C",
+      "clause": "Rule 6(1)(c)",
+      "field": "net_quantity",
+      "description": "Net quantity in standard metric units",
+      "check_target": "normalized_value.unit",
+      "valid_units": ["g", "kg", "ml", "l", "ltr", "pieces", "units"],
+      "mandatory": true,
+      "severity": "HIGH",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "RULE_6_1_D",
+      "clause": "Rule 6(1)(d)",
+      "field": "mfg_date",
+      "description": "Month and year of manufacture, pre-packing, or import",
+      "mandatory": true,
+      "severity": "HIGH",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "RULE_6_1_E",
+      "clause": "Rule 6(1)(e)",
+      "field": "mrp",
+      "description": "Maximum Retail Price with mandatory tax declaration",
+      "check_target": "raw_value",
+      "regex_pattern": "(?:MRP|M\\.R\\.P\\.?|₹|Rs\\.?)\\s*[:\\-]?\\s*\\d+(?:\\.\\d{1,2})?\\s*[^a-zA-Z]*(?:[Ii]ncl\\.?|inclusive)\\s*(?:of\\s*)?all\\s*taxes",
+      "mandatory": true,
+      "severity": "CRITICAL",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "RULE_6_1_H",
+      "clause": "Rule 6(1)(h)",
+      "field": "consumer_care",
+      "description": "Consumer care contact details (phone number, email, or postal address)",
+      "mandatory": true,
+      "severity": "MEDIUM",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "SCHEDULE_2",
+      "clause": "Second Schedule",
+      "field": "standard_pack_size",
+      "description": "Commodities must be packed in standard prescribed sizes",
+      "mandatory": false,
+      "severity": "WARNING"
+    }
+  ]
+}
