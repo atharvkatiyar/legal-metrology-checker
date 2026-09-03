@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import CHAR, TypeDecorator
@@ -46,6 +46,28 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), primary_key=True, default=uuid.uuid4
+    )
+    officer_id: Mapped[str] = mapped_column(
+        String(100), unique=True, index=True, nullable=False
+    )
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    region: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    scans: Mapped[List["ScanResult"]] = relationship(
+        "ScanResult", back_populates="officer", lazy="selectin"
+    )
+
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -54,6 +76,7 @@ class Product(Base):
     )
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     brand: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -75,18 +98,29 @@ class ScanResult(Base):
     product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
+    officer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     image_paths: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     is_compliant: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     compliance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     raw_ocr: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     extracted_fields: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    sync_status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="pending_sync"
+    )
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
 
     product: Mapped[Optional["Product"]] = relationship(
         "Product", back_populates="scan_results", lazy="selectin"
+    )
+    officer: Mapped[Optional["User"]] = relationship(
+        "User", back_populates="scans", lazy="selectin"
     )
     violations: Mapped[List["ViolationRecord"]] = relationship(
         "ViolationRecord",
@@ -109,7 +143,7 @@ class ScanResult(Base):
         if not value:
             self.image_paths = []
             return
-            
+
         if isinstance(value, list):
             self.image_paths = value
         elif isinstance(value, str):
@@ -135,8 +169,12 @@ class ViolationRecord(Base):
         GUID(), ForeignKey("scan_results.id", ondelete="CASCADE"), nullable=False
     )
     field_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    issue: Mapped[str] = mapped_column(String(1024), nullable=False)
+    issue: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(String(50), nullable=False)
+    violation_category: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="TEXT_CONTENT"
+    )
+    measured_value: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bbox: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     legal_reference: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     image_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
