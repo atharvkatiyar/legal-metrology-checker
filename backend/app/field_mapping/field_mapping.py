@@ -276,6 +276,17 @@ AMOUNT_ONLY_RAW_RE = re.compile(
     r"[\s:]*(?P<sign>[+-])?(?P<amount_raw>\d[\d,]*(?:\.\d+)?)(?!\w)"
 )
 
+# OCR recovery pattern observed in real packaged-label scans:
+# e.g. "R= .301. 00" intended as an MRP currency/value pair.
+# This is deliberately narrow and is only considered inside an MRP-labelled
+# recovery window; it is never accepted as a standalone price.
+BROKEN_MRP_AMOUNT_RE = re.compile(
+    r"\bR\s*=\s*\.?\s*(?P<whole>\d{2,4})\s*[\.\s]+\s*(?P<decimal>\d{2})\b",
+    re.IGNORECASE,
+)
+
+MRP_RECOVERY_WINDOW = 140
+
 
 # ---------------------------------------------------------------------------
 # Net Quantity config
@@ -629,6 +640,52 @@ def extract_mrp_candidates(text: str) -> List[Candidate]:
                             suppressed=suppressed,
                         ))
 
+            # Real-label OCR recovery: standard "Rs 301.00" matching can fail
+            # when OCR splits the currency/value into something like
+            # "R= .301. 00". Search a wider MRP-only window, but keep the
+            # recovery tied to the actual MRP label.
+            recovery_end = _effective_window_end(
+                text, lm.start(), search_start, boundary_starts, MRP_RECOVERY_WINDOW
+            )
+            recovery_text = text[search_start:recovery_end]
+
+            if not any(
+                c.field == "MRP" and not c.suppressed
+                for c in candidates
+                if c.start == lm.start()
+            ):
+                rm = BROKEN_MRP_AMOUNT_RE.search(recovery_text)
+                if rm:
+                    whole = rm.group("whole")
+                    decimal = rm.group("decimal")
+                    amount = float(f"{whole}.{decimal}")
+
+                    value_pos = rm.start()
+                    abs_start = search_start + value_pos
+                    abs_end = search_start + rm.end()
+
+                    candidates.append(Candidate(
+                        field="MRP",
+                        value=amount,
+                        raw_evidence=text[lm.start():abs_end],
+                        label_matched=label_name,
+                        score=round(LABEL_BASE + OCR_RECOVERY_BONUS, 4),
+                        start=lm.start(),
+                        end=abs_end,
+                        reasons=[
+                            f"label='{label_name}'",
+                            "OCR recovery: malformed 'R=' currency/value layout normalized",
+                            f"recovered amount={amount:.2f}",
+                            "confidence forced 'low' (OCR recovery)",
+                        ],
+                        reason_codes=[
+                            "MRP_LABEL_MATCH",
+                            "OCR_CURRENCY_RECOVERY",
+                            "BROKEN_CURRENCY_LAYOUT_RECOVERY",
+                        ],
+                        suppressed=False,
+                    ))
+
     return candidates
 
 
@@ -940,15 +997,29 @@ def _finalize_extended(field_name: str, candidates: List[Candidate],
 
 
 def _cross_field_boundaries(text: str) -> List[int]:
-    """Boundary set used ONLY by the new Aug 27 fields, so a manufacturer
-    address / date / consumer-care value search stops at the start of ANY
-    other recognized field label (MRP, Net Qty, or another Aug 27 field),
-    not just labels of its own field. MRP's and Net Quantity's own boundary
-    computation (inside extract_mrp_candidates / extract_net_qty_candidates)
-    is untouched and still uses only their own field's labels+negatives."""
+    """Boundary set used by the Aug 27 extended fields."""
     all_positive = (MRP_LABELS + NET_QTY_LABELS + MANUFACTURER_LABELS +
                      MFG_DATE_LABELS + EXPIRY_LABELS + CONSUMER_CARE_LABELS)
     all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE
+    return _boundaries(text, all_positive, all_negative)
+
+
+def _mfg_date_boundaries(text: str) -> List[int]:
+    """Manufacturing-date-specific boundaries.
+
+    OCR on real labels can place another field label (especially MRP)
+    between the manufacturing-date label and its value. Do not let MRP or
+    Net Quantity split that evidence span. Still stop at another date field,
+    manufacturer block, or consumer-care block so the date resolver does not
+    wander through the entire document.
+    """
+    all_positive = (
+        MFG_DATE_LABELS
+        + EXPIRY_LABELS
+        + MANUFACTURER_LABELS
+        + CONSUMER_CARE_LABELS
+    )
+    all_negative = MFG_DATE_NEGATIVE + MRP_NEGATIVE + NET_QTY_NEGATIVE
     return _boundaries(text, all_positive, all_negative)
 
 
@@ -1051,7 +1122,7 @@ _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
 _DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
-MFG_DATE_WINDOW = 40
+MFG_DATE_WINDOW = 100
 
 
 def _normalize_date(kind: str, groups) -> Optional[str]:
@@ -1127,7 +1198,7 @@ def extract_mfg_date_candidates(text: str) -> List[Candidate]:
     if not text:
         return candidates
 
-    boundary_starts = _cross_field_boundaries(text)
+    boundary_starts = _mfg_date_boundaries(text)
 
     for label_pat, label_name in MFG_DATE_LABELS:
         for lm in re.finditer(label_pat, text, re.IGNORECASE):
