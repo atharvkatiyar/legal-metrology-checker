@@ -1,18 +1,24 @@
 from __future__ import annotations
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
 from app.core.database import engine
 from app.models.schema import Base
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -28,12 +34,9 @@ app.add_middleware(
 )
 
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
-from fastapi.responses import FileResponse
-import os
 
-# This tells FastAPI: "When someone visits the home page (/), send them my index.html file"
+
 @app.get("/")
-async def serve_frontend():
-    # Adjust this path based on where your frontend folder is located relative to main.py
+async def serve_frontend() -> FileResponse:
     frontend_path = os.path.join(os.path.dirname(__file__), "../../frontend/index.html")
     return FileResponse(frontend_path)

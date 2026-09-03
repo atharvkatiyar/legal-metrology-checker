@@ -1,18 +1,22 @@
 from __future__ import annotations
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Boolean, JSON
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator, CHAR
+from sqlalchemy.types import CHAR, TypeDecorator
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+
 class GUID(TypeDecorator):
     """Platform-independent UUID type compatible with SQLite and Postgres."""
+
     impl = CHAR
     cache_ok = True
 
@@ -37,8 +41,10 @@ class GUID(TypeDecorator):
             return value
         return uuid.UUID(str(value))
 
+
 class Base(DeclarativeBase):
     pass
+
 
 class Product(Base):
     __tablename__ = "products"
@@ -59,6 +65,7 @@ class Product(Base):
         lazy="selectin",
     )
 
+
 class ScanResult(Base):
     __tablename__ = "scan_results"
 
@@ -68,7 +75,7 @@ class ScanResult(Base):
     product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
-    image_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    image_paths: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     is_compliant: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     compliance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -88,6 +95,36 @@ class ScanResult(Base):
         lazy="selectin",
     )
 
+    @property
+    def image_path(self) -> Optional[str]:
+        """Backward-compat accessor: first staged image, for modules
+        (e.g. font_size_adapter callers) that still expect a single path."""
+        if self.image_paths:
+            return self.image_paths[0]
+        return None
+
+    @image_path.setter
+    def image_path(self, value: Any) -> None:
+        """Backward-compat setter: parses JSON string from router.py or accepts list directly."""
+        if not value:
+            self.image_paths = []
+            return
+            
+        if isinstance(value, list):
+            self.image_paths = value
+        elif isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    self.image_paths = parsed
+                else:
+                    self.image_paths = [value]
+            except ValueError:
+                self.image_paths = [value]
+        else:
+            self.image_paths = [str(value)]
+
+
 class ViolationRecord(Base):
     __tablename__ = "violations"
 
@@ -102,6 +139,7 @@ class ViolationRecord(Base):
     severity: Mapped[str] = mapped_column(String(50), nullable=False)
     bbox: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     legal_reference: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    image_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

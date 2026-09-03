@@ -1,41 +1,108 @@
 from __future__ import annotations
-
+import json
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
 from app.core.database import get_db
 from app.models.schema import ScanResult, ViolationRecord
 
 from PIL import Image
 import pillow_heif
-
 pillow_heif.register_heif_opener()
 
 from app.services.ocr import extract_text_from_image
 from app.services.field_mapping_fallback import map_fields_with_fallback
-from app.services.field_mapping_adapter import build_field_mapping_output
+from app.services.field_mapping_adapter import build_field_mapping_output, _FIELD_KEY_MAP
 from app.services.rule_engine import check_compliance
 from app.services.font_size_adapter import try_check_font_size
 
-
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
-
 UPLOAD_DIR = "uploads"
+
+_CONFIDENCE_RANK = {"high": 2, "low": 1, "none": 0}
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _save_and_normalize_upload(upload: UploadFile) -> str:
+    file_extension = os.path.splitext(upload.filename or "")[1] or ".jpg"
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    image_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+    contents = await upload.read()
+    with open(image_path, "wb") as f:
+        f.write(contents)
+    await upload.close()
+
+    if image_path.lower().endswith((".heic", ".heif")):
+        img = Image.open(image_path)
+        new_image_path = os.path.splitext(image_path)[0] + ".jpg"
+        img.convert("RGB").save(new_image_path, "JPEG")
+        os.remove(image_path)
+        image_path = new_image_path
+
+    return image_path
+
+
+def _merge_field_result(
+    existing: Optional[dict[str, Any]],
+    candidate: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if existing is None:
+        return candidate
+    if candidate is None:
+        return existing
+
+    if existing.get("value") is None and candidate.get("value") is not None:
+        return candidate
+    if candidate.get("value") is None:
+        return existing
+
+    existing_rank = _CONFIDENCE_RANK.get(existing.get("confidence"), 0)
+    candidate_rank = _CONFIDENCE_RANK.get(candidate.get("confidence"), 0)
+    if candidate_rank > existing_rank:
+        return candidate
+    return existing
+
+
+def _merge_mapping_results(
+    per_image_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not per_image_results:
+        return {}
+
+    field_names: set[str] = set()
+    for result in per_image_results:
+        field_names.update(result.keys())
+
+    merged: dict[str, Any] = {}
+    for field_name in field_names:
+        current: Optional[dict[str, Any]] = None
+        for result in per_image_results:
+            candidate = result.get(field_name)
+            if not isinstance(candidate, dict):
+                continue
+            current = _merge_field_result(current, candidate)
+        merged[field_name] = current if current is not None else {
+            "field": field_name,
+            "value": None,
+            "confidence": "none",
+            "raw_evidence": None,
+            "ambiguous": False,
+            "all_candidates": [],
+        }
+    return merged
 
 
 @router.get("/health")
@@ -51,125 +118,115 @@ async def health_check() -> dict:
     status_code=status.HTTP_201_CREATED,
 )
 async def init_scan(
-    image: UploadFile = File(...),
+    images: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Main automated pipeline.
+    Main automated pipeline. Accepts one or more images of a single
+    product (e.g. front + base + side panel), aggregates extracted
+    fields across all of them, and evaluates compliance once.
 
     Font-size checking is intentionally NOT performed here because it
     requires a manually supplied tap point. It is handled separately by
     /scans/{scan_id}/font-check.
 
-    OCR failures are handled gracefully: the scan continues with an empty
-    OCR result so the normal Field Mapping and compliance logic can report
-    the supported fields as missing instead of crashing the request.
+    Per-image OCR/field-mapping failures are handled gracefully: a
+    failing image is skipped for extraction purposes rather than
+    crashing the whole request.
     """
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    file_extension = (
-        os.path.splitext(image.filename or "")[1]
-        or ".jpg"
-    )
+    image_paths: list[str] = []
+    for upload in images:
+        try:
+            path = await _save_and_normalize_upload(upload)
+        except Exception:
+            logger.exception(
+                "Failed to save/normalize uploaded image %s",
+                upload.filename,
+            )
+            continue
+        image_paths.append(path)
 
-    unique_filename = (
-        f"{uuid.uuid4()}{file_extension}"
-    )
-
-    image_path = os.path.join(
-        UPLOAD_DIR,
-        unique_filename,
-    )
-
-    contents = await image.read()
-
-    with open(
-        image_path,
-        "wb",
-    ) as f:
-        f.write(contents)
-
-    await image.close()
-
-    if image_path.lower().endswith(
-        (".heic", ".heif")
-    ):
-        img = Image.open(image_path)
-
-        new_image_path = (
-            os.path.splitext(image_path)[0]
-            + ".jpg"
+    if not image_paths:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid images were uploaded.",
         )
 
-        img.convert("RGB").save(
-            new_image_path,
-            "JPEG",
+    per_image_ocr: list[list[dict[str, Any]]] = []
+    per_image_texts: list[str] = []
+    per_image_raw_results: list[dict[str, Any]] = []
+
+    for idx, path in enumerate(image_paths):
+        try:
+            ocr_tokens = await extract_text_from_image(path)
+        except Exception:
+            logger.exception("OCR failed for image %s", path)
+            ocr_tokens = []
+        if not ocr_tokens:
+            ocr_tokens = []
+
+        per_image_ocr.append(ocr_tokens)
+        per_image_texts.append(
+            " ".join(
+                t.get("text", "")
+                for t in ocr_tokens
+                if isinstance(t, dict)
+            )
         )
 
-        os.remove(image_path)
+        try:
+            image_mapping_result = await map_fields_with_fallback(
+                ocr_tokens,
+                image_path=path,
+            )
+        except Exception:
+            logger.exception("Field mapping failed for image %s", path)
+            image_mapping_result = {}
 
-        image_path = new_image_path
+        if not isinstance(image_mapping_result, dict):
+            image_mapping_result = {}
 
-    # ------------------------------------------------------------------
-    # OCR
-    # ------------------------------------------------------------------
-    #
-    # OCR is an upstream dependency. A failure here should not crash the
-    # entire scan request. The rest of the pipeline can safely operate on
-    # an empty OCR result and report the corresponding missing fields.
-    #
-    try:
-        ocr_tokens = await extract_text_from_image(
-            image_path
+        for field_result in image_mapping_result.values():
+            if isinstance(field_result, dict):
+                field_result["_image_index"] = idx
+
+        per_image_raw_results.append(image_mapping_result)
+
+    merged_raw_results = _merge_mapping_results(per_image_raw_results)
+
+    mapping_output = build_field_mapping_output(merged_raw_results)
+    compliance_result = check_compliance(mapping_output)
+
+    field_to_image_index: dict[str, Optional[int]] = {}
+    for source_key, target_key in _FIELD_KEY_MAP.items():
+        source_result = merged_raw_results.get(source_key)
+        field_to_image_index[target_key] = (
+            source_result.get("_image_index")
+            if isinstance(source_result, dict)
+            else None
         )
 
-    except Exception:
-        logger.exception(
-            "OCR failed for image %s",
-            image_path,
-        )
-        ocr_tokens = []
-
-    if not ocr_tokens:
-        ocr_tokens = []
-
-    # ------------------------------------------------------------------
-    # Field Mapping
-    # ------------------------------------------------------------------
-
-    mapping_result_dict = await map_fields_with_fallback(
-        ocr_tokens,
-        image_path=image_path,
-)
-
-    mapping_output = build_field_mapping_output(
-        mapping_result_dict
-    )
-
-    # ------------------------------------------------------------------
-    # Compliance
-    # ------------------------------------------------------------------
-
-    compliance_result = check_compliance(
-        mapping_output
-    )
-
-    # ------------------------------------------------------------------
-    # Persist scan result
-    # ------------------------------------------------------------------
+    combined_raw_text = "\n\n".join(per_image_texts)
 
     scan_result = ScanResult(
         id=uuid.uuid4(),
         product_id=None,
-        image_path=image_path,
+        image_path=json.dumps(image_paths),
         status="completed",
         is_compliant=compliance_result.is_compliant,
         compliance_score=compliance_result.score,
-        raw_ocr=ocr_tokens,
-        extracted_fields=mapping_result_dict,
+        raw_ocr={
+            "combined_text": combined_raw_text,
+            "images": [
+                {"image_path": p, "tokens": tokens}
+                for p, tokens in zip(image_paths, per_image_ocr)
+            ],
+        },
+        extracted_fields=merged_raw_results,
         created_at=utcnow(),
     )
-
     db.add(scan_result)
 
     for violation in compliance_result.violations:
@@ -189,17 +246,15 @@ async def init_scan(
         )
 
     await db.commit()
-
-    await db.refresh(
-        scan_result
-    )
+    await db.refresh(scan_result)
 
     return {
         "scan_id": str(scan_result.id),
         "status": scan_result.status,
-        "image_path": scan_result.image_path,
+        "image_paths": image_paths,
         "is_compliant": compliance_result.is_compliant,
         "score": compliance_result.score,
+        "extracted_fields": merged_raw_results,
         "violations": [
             {
                 "field_name": violation.field_name,
@@ -215,6 +270,7 @@ async def init_scan(
                     if violation.bbox
                     else None
                 ),
+                "image_index": field_to_image_index.get(violation.field_name),
                 "legal_reference": violation.legal_reference,
             }
             for violation in compliance_result.violations
@@ -229,25 +285,20 @@ async def get_scan(
 ) -> dict:
     result = await db.execute(
         select(ScanResult)
-        .options(
-            selectinload(
-                ScanResult.violations
-            )
-        )
-        .where(
-            ScanResult.id == scan_id
-        )
+        .options(selectinload(ScanResult.violations))
+        .where(ScanResult.id == scan_id)
     )
-
-    scan_result = (
-        result.scalar_one_or_none()
-    )
+    scan_result = result.scalar_one_or_none()
 
     if scan_result is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Scan not found",
-        )
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    try:
+        image_paths = json.loads(scan_result.image_path)
+        if not isinstance(image_paths, list):
+            image_paths = [scan_result.image_path]
+    except (TypeError, ValueError):
+        image_paths = [scan_result.image_path]
 
     return {
         "id": str(scan_result.id),
@@ -256,28 +307,24 @@ async def get_scan(
             if scan_result.product_id
             else None
         ),
-        "image_path": scan_result.image_path,
+        "image_paths": image_paths,
         "status": scan_result.status,
         "is_compliant": scan_result.is_compliant,
         "compliance_score": scan_result.compliance_score,
         "raw_ocr": scan_result.raw_ocr,
         "extracted_fields": scan_result.extracted_fields,
-        "created_at": (
-            scan_result.created_at.isoformat()
-        ),
+        "created_at": scan_result.created_at.isoformat(),
         "violations": [
             {
-                "id": str(violation.id),
-                "field_name": violation.field_name,
-                "issue": violation.issue,
-                "severity": violation.severity,
-                "bbox": violation.bbox,
-                "legal_reference": violation.legal_reference,
-                "created_at": (
-                    violation.created_at.isoformat()
-                ),
+                "id": str(v.id),
+                "field_name": v.field_name,
+                "issue": v.issue,
+                "severity": v.severity,
+                "bbox": v.bbox,
+                "legal_reference": v.legal_reference,
+                "created_at": v.created_at.isoformat(),
             }
-            for violation in scan_result.violations
+            for v in scan_result.violations
         ],
     }
 
@@ -289,48 +336,50 @@ class FontCheckRequest(BaseModel):
     net_quantity_g_or_ml: Optional[float] = None
 
 
-@router.post(
-    "/scans/{scan_id}/font-check"
-)
+@router.post("/scans/{scan_id}/font-check")
 async def font_check(
     scan_id: uuid.UUID,
     body: FontCheckRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    OPTIONAL, separate from the main automated pipeline.
-
-    Requires a manually supplied tap point identifying the reference
-    coin's approximate location. This endpoint never changes the stored
-    main scan compliance result.
+    OPTIONAL, separate from the main automated pipeline. Requires a
+    manually supplied tap point identifying the reference coin's
+    approximate location. Operates on the first image of a multi-image
+    scan. Never changes the stored main scan compliance result.
     """
     result = await db.execute(
-        select(ScanResult).where(
-            ScanResult.id == scan_id
-        )
+        select(ScanResult).where(ScanResult.id == scan_id)
     )
-
-    scan_result = (
-        result.scalar_one_or_none()
-    )
+    scan_result = result.scalar_one_or_none()
 
     if scan_result is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Scan not found",
-        )
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    try:
+        stored_paths = json.loads(scan_result.image_path)
+        if isinstance(stored_paths, list) and stored_paths:
+            primary_image_path = stored_paths[0]
+        else:
+            primary_image_path = scan_result.image_path
+    except (TypeError, ValueError):
+        primary_image_path = scan_result.image_path
+
+    raw_ocr = scan_result.raw_ocr or {}
+    if isinstance(raw_ocr, dict) and "images" in raw_ocr:
+        images_meta = raw_ocr.get("images") or []
+        primary_tokens = images_meta[0]["tokens"] if images_meta else []
+    elif isinstance(raw_ocr, list):
+        primary_tokens = raw_ocr
+    else:
+        primary_tokens = []
 
     font_result = try_check_font_size(
-        image_path=scan_result.image_path,
-        ocr_tokens=scan_result.raw_ocr or [],
-        tap_point=(
-            body.tap_x,
-            body.tap_y,
-        ),
+        image_path=primary_image_path,
+        ocr_tokens=primary_tokens,
+        tap_point=(body.tap_x, body.tap_y),
         coin_key=body.coin_key,
-        net_quantity_g_or_ml=(
-            body.net_quantity_g_or_ml
-        ),
+        net_quantity_g_or_ml=body.net_quantity_g_or_ml,
     )
 
     if font_result is None:
