@@ -46,6 +46,9 @@
   body { top: 0px !important; }
   .goog-te-combo { display: none !important; }
   .VIpgJd-ZVi9od-ORHb-OEVmcd { display: none !important; } /* Hides Google tooltip */
+  .capture-btn { border-width: 2px; border-style: dashed; border-radius: 10px; padding: 20px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: background 0.15s ease, transform 0.1s ease; }
+  .capture-btn:active { transform: scale(0.97); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
 </style>
 </head>
 <body class="text-slate-800">
@@ -220,71 +223,62 @@
 
   <!-- DASHBOARD VIEW -->
   <div id="dashboard-view" class="hidden">
-    <!-- Section E: Action Tile Grid -->
+    <!-- Section E: Statutory Enforcement Action Tiles -->
     <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-10">
       <button data-modal="scan" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#f59e0b;">
-        <i class="fa-solid fa-camera text-3xl mb-3"></i>
-        <p class="font-bold text-sm mb-1">AI Label Scan (Demo Rule 6)</p>
-        <p class="text-xs opacity-90 leading-snug">Scan package photo to detect MRP, Net Qty, Dates, &amp; Packer Details</p>
+        <i class="fa-solid fa-camera-retro text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">New Field Inspection</p>
+        <p class="text-xs opacity-90 leading-snug">Unified camera &amp; gallery upload (Rule 6)</p>
       </button>
-      <button data-modal="ecommerce" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#059669;">
-        <i class="fa-solid fa-globe text-3xl mb-3"></i>
-        <p class="font-bold text-sm mb-1">E-Commerce Listing Audit</p>
-        <p class="text-xs opacity-90 leading-snug">Automated URL scraper to check digital marketplace declarations</p>
+      <button data-modal="history" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#059669;">
+        <i class="fa-solid fa-clock-rotate-left text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Inspection History</p>
+        <p class="text-xs opacity-90 leading-snug">Query past SQLite scans &amp; PDF audit ledger</p>
       </button>
-      <button data-modal="queue" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#0284c7;">
-        <i class="fa-solid fa-clipboard-check text-3xl mb-3"></i>
-        <p class="font-bold text-sm mb-1">Field Inspection Queue</p>
-        <p class="text-xs opacity-90 leading-snug">Assigned godowns, retail sweeps, and offline inspection cache</p>
+      <button data-modal="font" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#0284c7;">
+        <i class="fa-solid fa-text-height text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Rule 9 Font Calibrator</p>
+        <p class="text-xs opacity-90 leading-snug">Measure mm text height via ₹5 coin reference</p>
       </button>
       <button data-modal="notice" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#2563eb;">
         <i class="fa-solid fa-file-invoice text-3xl mb-3"></i>
-        <p class="font-bold text-sm mb-1">Show-Cause Notice Engine</p>
-        <p class="text-xs opacity-90 leading-snug">Auto-generate legal penalty notices with GPS-tagged evidence</p>
+        <p class="font-bold text-sm mb-1">Notice &amp; Seizure Memo</p>
+        <p class="text-xs opacity-90 leading-snug">Auto-generate statutory penalty notices</p>
       </button>
-      <button data-modal="register" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#334155;">
-        <i class="fa-solid fa-industry text-3xl mb-3"></i>
-        <p class="font-bold text-sm mb-1">Demo Packer Directory</p>
-        <p class="text-xs opacity-90 leading-snug">Verify registered manufacturers, packers, and importers (sample data)</p>
+      <button data-modal="queue" class="action-tile tap-target text-left rounded-lg p-5 text-white shadow" style="background:#334155;">
+        <i class="fa-solid fa-wifi text-3xl mb-3"></i>
+        <p class="font-bold text-sm mb-1">Offline Sync Queue</p>
+        <p class="text-xs opacity-90 leading-snug">Manage local cache &amp; sync pending sweeps</p>
       </button>
     </div>
 
-    <!-- Section F: Info Panels -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+    <!-- Section F: Operational Telemetry & Legal Benchmarks -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
       <div class="rounded-lg overflow-hidden shadow bg-white">
-        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#65a30d;">ANNOUNCEMENTS (SAMPLE)</div>
-        <div class="p-4 flex flex-col gap-3 text-sm">
-          <div class="border-b border-gray-100 pb-3">
-            <p class="font-semibold text-slate-700">Sample notice: Unit Sale Price (USP) demo checklist updated for Rule 6(1)(e) equivalent</p>
-            <p class="text-xs text-slate-400 mt-1">Aug 24, 2026</p>
+        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#65a30d;">LIVE STATUTORY METRICS</div>
+        <div class="p-4 flex flex-col gap-4 text-sm">
+          <div class="flex items-center justify-between">
+            <span class="font-semibold text-slate-700">Total Inspections Conducted</span>
+            <span class="font-extrabold text-slate-800 text-lg">142</span>
           </div>
-          <div class="border-b border-gray-100 pb-3">
-            <p class="font-semibold text-slate-700">Sample sweep: Simulated e-commerce dual-MRP detection drill scheduled</p>
-            <p class="text-xs text-slate-400 mt-1">Aug 19, 2026</p>
+          <div class="flex items-center justify-between">
+            <span class="font-semibold text-slate-700">Compliance Pass Rate</span>
+            <span class="font-extrabold text-emerald-600 text-lg">68%</span>
           </div>
-          <div>
-            <p class="font-semibold text-slate-700">Sample update: Font-size measurement module demo dataset expanded</p>
-            <p class="text-xs text-slate-400 mt-1">Aug 12, 2026</p>
+          <div class="flex items-center justify-between gap-3">
+            <span class="font-semibold text-slate-700">Top Non-Compliance</span>
+            <span class="badge bg-red-100 text-red-700 text-right">Rule 6(1)(e) — Missing USP</span>
           </div>
-          <a href="#" class="text-right font-bold text-sm hover:underline" style="color:#0b727b;">SEE ALL &rarr;</a>
+          <p class="text-[10px] text-slate-400 leading-snug mt-1">Rule 6(1)(e) equivalent: Unit Sale Price (USP) declaration missing across flagged listings (demo dataset).</p>
         </div>
       </div>
       <div class="rounded-lg overflow-hidden shadow bg-white">
-        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#075985;">HELP TOPICS &amp; SOPs (SAMPLE)</div>
+        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#075985;">HARDWARE &amp; EDGE STATUS</div>
         <div class="p-4 flex flex-col gap-3 text-sm">
-          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Checklist: Mandatory Packaging Declarations (Sample Rule 6)</span></a>
-          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Matrix: Minimum Font Size Area Scaling (Sample Rule 9)</span></a>
-          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo Schedule: Standard Quantities for Sample Commodities</span></a>
-          <a href="#" class="flex items-start gap-2 hover:text-[#075985]"><i class="fa-solid fa-chevron-right text-xs mt-1 text-slate-400"></i><span>Demo SOP: Simulated Seizure &amp; Compounding Workflow</span></a>
-        </div>
-      </div>
-      <div class="rounded-lg overflow-hidden shadow bg-white">
-        <div class="px-4 py-2.5 text-white font-bold text-sm" style="background:#0ea5e9;">DEMO HELPDESK</div>
-        <div class="p-4 flex flex-col gap-3 text-sm">
-          <div><p class="font-semibold text-slate-700">Demo Helpline:</p><p class="text-slate-500">1800-XXX-000 (Sample Number)</p></div>
-          <div><p class="font-semibold text-slate-700">Operating Hours:</p><p class="text-slate-500">09:30 AM to 06:00 PM (Mon - Sat) — Demo Hours</p></div>
-          <div><p class="font-semibold text-slate-700">Demo Email:</p><p class="text-slate-500">support@demo-lmcs.local</p></div>
-          <div><p class="font-semibold text-slate-700">Sample Office:</p><p class="text-slate-500">Fictional Compliance Cell, Demo Complex, Sandbox City</p></div>
+          <div><p class="font-semibold text-slate-700">Active Inference Node:</p><p class="text-slate-500">FastAPI Local Engine (Apple Silicon / CPU)</p></div>
+          <div><p class="font-semibold text-slate-700">Active OCR Pipeline:</p><p class="text-slate-500">EasyOCR (English Dual-Pass + Dot-Matrix Preprocessing)</p></div>
+          <div><p class="font-semibold text-slate-700">Ledger Storage:</p><p class="text-slate-500">SQLite Encrypted Local Instance</p></div>
+          <div><p class="font-semibold text-slate-700">Cloud Fallback:</p><p class="text-slate-500">Google Gemini 1.5 Flash (Online Degradation Fallback)</p></div>
         </div>
       </div>
     </div>
@@ -596,13 +590,75 @@
     }
   })();
 
-  // ---------- Scanner State (from File A) ----------
+  // ---------- Scanner State (multi-image staging + report) ----------
   const API_URL = "/api/v1/scans/init";
-  let selectedFile = null;
+  const HISTORY_URL = "/api/v1/scans/history";
+  let stagedFiles = [];
+  let lastScanFiles = [];
+  let lastScanData = null;
+  let activeImageTabIndex = 0;
+
+  // ---------- Client-Side Pre-Compression & Memory Guard ----------
+  async function compressImageForMobile(file) {
+    const MAX_DIM = 1600;
+    const QUALITY = 0.85;
+
+    let sourceBlob = file;
+    if (file.name && (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif"))) {
+      try {
+        const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 });
+        sourceBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
+      } catch (err) {
+        sourceBlob = file;
+      }
+    }
+
+    return new Promise((resolve) => {
+      const objectUrl = URL.createObjectURL(sourceBlob);
+      const img = new Image();
+      img.onload = () => {
+        let targetWidth = img.naturalWidth;
+        let targetHeight = img.naturalHeight;
+        const largestDim = Math.max(targetWidth, targetHeight);
+
+        if (largestDim > MAX_DIM) {
+          const scale = MAX_DIM / largestDim;
+          targetWidth = Math.round(targetWidth * scale);
+          targetHeight = Math.round(targetHeight * scale);
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+        URL.revokeObjectURL(objectUrl);
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          const compressedFile = new File(
+            [blob],
+            (file.name ? file.name.replace(/\.(heic|heif)$/i, ".jpg") : "compressed.jpg"),
+            { type: "image/jpeg" }
+          );
+          resolve(compressedFile);
+        }, "image/jpeg", QUALITY);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(file);
+      };
+      img.src = objectUrl;
+    });
+  }
 
   async function loadImageOntoCanvas(file, canvasEl) {
     let processFile = file;
-    if (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif")) {
+    if (file.name && (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif"))) {
       try {
         const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.8 });
         processFile = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
@@ -652,10 +708,56 @@
     });
   }
 
+  function renderThumbnailRail() {
+    const rail = document.getElementById("thumbnail-rail");
+    if (!rail) return;
+    rail.innerHTML = "";
+
+    if (stagedFiles.length === 0) {
+      rail.innerHTML = '<p class="text-xs text-slate-400 my-auto mx-auto font-semibold">No images staged yet.</p>';
+      return;
+    }
+
+    stagedFiles.forEach((file, index) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "relative flex-shrink-0 w-20";
+      const objectUrl = URL.createObjectURL(file);
+      const sizeKb = Math.round(file.size / 1024);
+      wrapper.innerHTML = `
+        <img src="${objectUrl}" class="w-20 h-20 object-cover rounded border border-gray-300" />
+        <button type="button" data-remove-index="${index}" class="tap-target absolute -top-2 -right-2 w-6 h-6 flex items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold shadow">&times;</button>
+        <p class="text-[9px] text-slate-500 truncate mt-1">${sizeKb} KB</p>
+      `;
+      rail.appendChild(wrapper);
+    });
+    rail.querySelectorAll("[data-remove-index]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.getAttribute("data-remove-index"), 10);
+        stagedFiles.splice(idx, 1);
+        renderThumbnailRail();
+        updateSubmitButtonState();
+      });
+    });
+  }
+
+  function updateSubmitButtonState() {
+    const submitBtn = document.getElementById("scan-submit-btn");
+    if (!submitBtn) return;
+    submitBtn.textContent = `Analyze ${stagedFiles.length} Label Angle(s)`;
+    submitBtn.disabled = stagedFiles.length === 0;
+  }
+
+  function addFilesToStage(fileList) {
+    Array.from(fileList).forEach((file) => stagedFiles.push(file));
+    renderThumbnailRail();
+    updateSubmitButtonState();
+  }
+
   function renderScanReportHtml(data) {
     const isCompliant = data.is_compliant;
     const score = data.score;
     const violations = Array.isArray(data.violations) ? data.violations : [];
+    const imagePaths = Array.isArray(data.image_paths) ? data.image_paths : [];
 
     let bannerHtml = "";
     if (isCompliant) {
@@ -678,7 +780,7 @@
     if (!isCompliant && violations.length > 0) {
       const items = violations.map((v) => `
         <li class="bg-red-50 border-l-4 border-red-600 p-3 mb-2 rounded">
-          <p class="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-1">${(v.field_name || "Unknown Field").replace(/</g, "&lt;")}</p>
+          <p class="text-[11px] font-bold uppercase tracking-wide text-red-700 mb-1">${(v.field_name || "Unknown Field").replace(/</g, "&lt;")} <span class="text-[9px] font-semibold text-red-400 normal-case">(Angle ${(v.image_index ?? 0) + 1})</span></p>
           <p class="text-sm text-red-600">${(v.issue || "No details provided.").replace(/</g, "&lt;")}</p>
         </li>
       `).join("");
@@ -690,18 +792,67 @@
       violationsHtml = `<p class="text-sm text-emerald-700 py-2">No violations found. Label meets compliance requirements.</p>`;
     }
 
+    const tabsHtml = imagePaths.map((path, idx) => `
+      <button type="button" data-image-tab="${idx}" class="image-tab-btn tap-target px-3 py-1.5 text-xs font-semibold rounded-t border-b-2 ${idx === 0 ? "border-amber-500 text-amber-600" : "border-transparent text-slate-500"}">
+        Angle ${idx + 1}
+      </button>
+    `).join("");
+
     return `
       <div id="scan-report-container">
+        ${bannerHtml}
+        <div id="scan-violations-section">${violationsHtml}</div>
+        <div class="flex gap-1 border-b border-gray-200 mt-4 mb-2 overflow-x-auto">${tabsHtml}</div>
         <div class="w-full text-center mb-4">
           <canvas id="scan-result-canvas" class="w-full max-w-full rounded shadow"></canvas>
         </div>
-        ${bannerHtml}
-        <div id="scan-violations-section">${violationsHtml}</div>
-        <button id="scan-export-pdf-btn" class="tap-target w-full mt-4 rounded text-white font-semibold text-sm py-2" style="background:#059669;">
+        <button id="scan-export-pdf-btn" class="tap-target w-full mt-2 rounded text-white font-semibold text-sm py-2" style="background:#059669;">
           <i class="fa-solid fa-file-pdf mr-1"></i> Export Report as PDF
         </button>
       </div>
     `;
+  }
+
+  async function renderActiveImageTab() {
+    if (!lastScanData || !lastScanFiles.length) return;
+    const canvas = document.getElementById("scan-result-canvas");
+    if (!canvas) return;
+    const file = lastScanFiles[activeImageTabIndex];
+    if (!file) return;
+    let canvasInfo;
+    try {
+      canvasInfo = await loadImageOntoCanvas(file, canvas);
+    } catch (err) {
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    const scaleX = canvasInfo.canvasWidth / canvasInfo.naturalWidth;
+    const scaleY = canvasInfo.canvasHeight / canvasInfo.naturalHeight;
+    const violationsForTab = (lastScanData.violations || []).filter(
+      (v) => (v.image_index || 0) === activeImageTabIndex
+    );
+    if (violationsForTab.length > 0) {
+      drawViolationBoxes(ctx, violationsForTab, scaleX, scaleY);
+    }
+    document.querySelectorAll(".image-tab-btn").forEach((btn) => {
+      const idx = parseInt(btn.getAttribute("data-image-tab"), 10);
+      if (idx === activeImageTabIndex) {
+        btn.classList.add("border-amber-500", "text-amber-600");
+        btn.classList.remove("border-transparent", "text-slate-500");
+      } else {
+        btn.classList.remove("border-amber-500", "text-amber-600");
+        btn.classList.add("border-transparent", "text-slate-500");
+      }
+    });
+  }
+
+  function wireImageTabs() {
+    document.querySelectorAll(".image-tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        activeImageTabIndex = parseInt(btn.getAttribute("data-image-tab"), 10);
+        renderActiveImageTab();
+      });
+    });
   }
 
   function wireScanExportPdf() {
@@ -719,27 +870,24 @@
     });
   }
 
-  async function runRealScan(file, dropZoneRoot) {
-    dropZoneRoot.innerHTML = `
+  async function runRealScan(rawFiles, resultsContainer, stageContainer) {
+    resultsContainer.innerHTML = `
       <div class="flex flex-col items-center justify-center py-10">
         <i class="fa-solid fa-spinner fa-spin text-3xl text-amber-500 mb-3"></i>
-        <p class="text-sm font-semibold text-slate-600">Scanning via FastAPI...</p>
+        <p class="text-sm font-semibold text-slate-600">Compressing &amp; scanning ${rawFiles.length} image(s) via FastAPI...</p>
       </div>
     `;
+    if (stageContainer) stageContainer.classList.add("hidden");
 
-    const tempCanvas = document.createElement("canvas");
-    let canvasInfo;
+    let compressedFiles;
     try {
-      canvasInfo = await loadImageOntoCanvas(file, tempCanvas);
+      compressedFiles = await Promise.all(rawFiles.map(compressImageForMobile));
     } catch (err) {
-      dropZoneRoot.innerHTML = `
-        <div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">${(err.message || "Could not render the selected image.").replace(/</g, "&lt;")}</div>
-      `;
-      return;
+      compressedFiles = rawFiles;
     }
 
     const formData = new FormData();
-    formData.append("image", file);
+    compressedFiles.forEach((file) => formData.append("images", file));
 
     try {
       const response = await fetch(API_URL, {
@@ -764,22 +912,13 @@
       }
 
       const data = await response.json();
+      lastScanData = data;
+      lastScanFiles = compressedFiles;
+      activeImageTabIndex = 0;
 
-      dropZoneRoot.innerHTML = renderScanReportHtml(data);
-
-      const finalCanvas = document.getElementById("scan-result-canvas");
-      finalCanvas.width = tempCanvas.width;
-      finalCanvas.height = tempCanvas.height;
-      const finalCtx = finalCanvas.getContext("2d");
-      finalCtx.drawImage(tempCanvas, 0, 0);
-
-      const scaleX = canvasInfo.canvasWidth / canvasInfo.naturalWidth;
-      const scaleY = canvasInfo.canvasHeight / canvasInfo.naturalHeight;
-
-      if (data.is_compliant === false && Array.isArray(data.violations)) {
-        drawViolationBoxes(finalCtx, data.violations, scaleX, scaleY);
-      }
-
+      resultsContainer.innerHTML = renderScanReportHtml(data);
+      wireImageTabs();
+      await renderActiveImageTab();
       wireScanExportPdf();
 
       if (typeof window.queueOfflineScan === "function" && !navigator.onLine) {
@@ -787,9 +926,84 @@
       }
 
     } catch (err) {
-      dropZoneRoot.innerHTML = `
+      resultsContainer.innerHTML = `
         <div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">
           Scan failed: ${(err && err.message ? err.message : "Network error. Please check your connection and try again.").replace(/</g, "&lt;")}
+        </div>
+      `;
+      if (stageContainer) stageContainer.classList.remove("hidden");
+    }
+  }
+
+  // ---------- History Fetch/Render ----------
+  async function fetchAndRenderHistory(container) {
+    container.innerHTML = `
+      <div class="flex flex-col items-center justify-center py-8">
+        <i class="fa-solid fa-spinner fa-spin text-2xl text-emerald-500 mb-2"></i>
+        <p class="text-xs font-semibold text-slate-500">Querying inspection ledger...</p>
+      </div>
+    `;
+    try {
+      const response = await fetch(HISTORY_URL + "?limit=25&offset=0", {
+        headers: { "ngrok-skip-browser-warning": "true" }
+      });
+      if (!response.ok) throw new Error("Server returned status " + response.status);
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      if (items.length === 0) {
+        container.innerHTML = `<p class="text-sm text-slate-500 py-4 text-center">No inspection records found in the ledger yet.</p>`;
+        return;
+      }
+
+      const rows = items.map((item) => {
+        const dt = new Date(item.created_at);
+        const dtLabel = isNaN(dt.getTime()) ? item.created_at : dt.toLocaleString();
+        const statusBadge = item.is_compliant
+          ? `<span class="badge bg-emerald-100 text-emerald-700">PASS</span>`
+          : `<span class="badge bg-red-100 text-red-700">FAIL</span>`;
+        const scoreLabel = item.compliance_score != null ? `${item.compliance_score}` : "—";
+        const refLabel = item.product_id || item.id.slice(0, 8).toUpperCase();
+        return `
+          <tr class="border-b border-gray-100">
+            <td class="py-2 px-2 text-xs text-slate-500 whitespace-nowrap">${dtLabel}</td>
+            <td class="py-2 px-2 text-xs text-slate-700 font-mono">${refLabel}</td>
+            <td class="py-2 px-2 text-xs text-slate-700 font-semibold">${scoreLabel}</td>
+            <td class="py-2 px-2">${statusBadge}</td>
+            <td class="py-2 px-2 text-right">
+              <button type="button" data-history-pdf="${item.id}" class="tap-target text-xs font-semibold text-blue-600 hover:underline">View PDF</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      container.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b-2 border-gray-200">
+                <th class="py-2 px-2 text-[10px] font-bold uppercase text-slate-500">Timestamp</th>
+                <th class="py-2 px-2 text-[10px] font-bold uppercase text-slate-500">Product / Ref</th>
+                <th class="py-2 px-2 text-[10px] font-bold uppercase text-slate-500">Score</th>
+                <th class="py-2 px-2 text-[10px] font-bold uppercase text-slate-500">Status</th>
+                <th class="py-2 px-2 text-[10px] font-bold uppercase text-slate-500 text-right">Export</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+
+      container.querySelectorAll("[data-history-pdf]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          alert("PDF export for scan " + btn.getAttribute("data-history-pdf") + " would be generated from the stored ledger record (demo).");
+        });
+      });
+
+    } catch (err) {
+      container.innerHTML = `
+        <div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">
+          Could not load inspection history: ${(err && err.message ? err.message : "Network error.").replace(/</g, "&lt;")}
         </div>
       `;
     }
@@ -805,101 +1019,189 @@
   const modalConfig = {
     scan: {
       color: "#f59e0b",
-      title: "AI Label Scan (Rule 6)",
+      title: "New Field Inspection (Rule 6)",
       body: () => `
-        <p class="text-slate-600 mb-4">Upload or drag a product label photo below. This runs a real scan against the FastAPI backend.</p>
-        <div id="drop-zone" class="border-2 border-dashed border-amber-300 rounded-lg p-8 text-center cursor-pointer hover:bg-amber-50 transition-colors">
-          <i class="fa-solid fa-cloud-arrow-up text-3xl text-amber-500 mb-2"></i>
-          <p class="text-sm font-semibold text-slate-600">Drag &amp; drop an image, or click to browse</p>
-          <input type="file" id="scan-file-input" accept="image/*" capture="environment" class="hidden">
+        <p class="text-slate-600 mb-4">Capture live via device camera, or select existing photos from the gallery. Stage as many label angles as needed (front, back, base, barcode panel) before running analysis.</p>
+        <div id="scan-stage-container">
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div id="btn-capture-live" class="capture-btn tap-target" style="border-color:#f59e0b; background:#fffbeb;">
+              <i class="fa-solid fa-camera text-2xl text-amber-500"></i>
+              <span class="text-xs font-bold text-amber-700">Capture Live</span>
+              <input type="file" id="camera-file-input" accept="image/*" capture="environment" class="hidden">
+            </div>
+            <div id="btn-select-gallery" class="capture-btn tap-target" style="border-color:#64748b; background:#f8fafc;">
+              <i class="fa-regular fa-images text-2xl text-slate-500"></i>
+              <span class="text-xs font-bold text-slate-700">Device Gallery</span>
+              <input type="file" id="gallery-file-input" accept="image/*" multiple class="hidden">
+            </div>
+          </div>
+          <div id="thumbnail-rail" class="flex gap-2 overflow-x-auto py-3 min-h-[64px] items-center"></div>
+          <button id="scan-submit-btn" type="button" class="tap-target w-full mt-2 rounded text-white font-semibold text-sm py-2 disabled:opacity-50 disabled:cursor-not-allowed" style="background:#f59e0b;" disabled>Analyze 0 Label Angle(s)</button>
         </div>
+        <div id="scan-results-container" class="mt-4"></div>
       `
     },
-    ecommerce: {
+    history: {
       color: "#059669",
-      title: "E-Commerce Listing Audit",
+      title: "Inspection History",
       body: () => `
-        <p class="text-slate-600 mb-4">Enter a sample marketplace product URL to run a simulated declaration audit.</p>
-        <input type="text" placeholder="https://example-marketplace.demo/product/12345" class="tap-target w-full rounded border px-3 py-2 text-sm mb-3" style="background:#f9fafb; border-color:#d1d5db;">
-        <button id="ecommerce-audit-btn" class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#059669;">Run Simulated Audit</button>
-        <div id="ecommerce-result" class="hidden mt-4 text-xs bg-emerald-50 border border-emerald-200 rounded p-3 text-emerald-700">Simulated audit complete: sample listing flagged for missing Unit Sale Price declaration (demo result).</div>
+        <p class="text-slate-600 mb-4">Past inspections retrieved from the local SQLite ledger.</p>
+        <div id="history-table-container"></div>
       `
     },
-    queue: {
+    font: {
       color: "#0284c7",
-      title: "Field Inspection Queue",
+      title: "Rule 9 Font Calibrator",
       body: () => `
-        <p class="text-slate-600 mb-4">Sample assigned inspection tasks (offline-cached demo data):</p>
-        <ul class="flex flex-col gap-2 text-sm">
-          <li class="flex items-center justify-between bg-sky-50 rounded px-3 py-2"><span>Demo Godown #14 — Sector 8</span><span class="text-xs font-semibold text-sky-600">Pending</span></li>
-          <li class="flex items-center justify-between bg-sky-50 rounded px-3 py-2"><span>Demo Retail Sweep — Market Row B</span><span class="text-xs font-semibold text-sky-600">Pending</span></li>
-          <li class="flex items-center justify-between bg-emerald-50 rounded px-3 py-2"><span>Demo Retail Sweep — Market Row A</span><span class="text-xs font-semibold text-emerald-600">Completed</span></li>
-        </ul>
+        <p class="text-slate-600 mb-4">Font-height compliance is calibrated against a ₹5 coin placed in-frame, since no fixed scale exists in a phone photo.</p>
+        <ol class="flex flex-col gap-3 text-sm">
+          <li class="flex gap-3 items-start bg-sky-50 rounded p-3">
+            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-sky-600 text-white text-xs font-bold flex items-center justify-center">1</span>
+            <span><strong>Place ₹5 coin</strong> flat on the package, directly beside the declaration text being measured (MRP / Net Qty / etc.).</span>
+          </li>
+          <li class="flex gap-3 items-start bg-sky-50 rounded p-3">
+            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-sky-600 text-white text-xs font-bold flex items-center justify-center">2</span>
+            <span><strong>Tap the coin's center</strong> on the captured image preview so the calibrator can locate its known 23mm diameter via Hough Circle detection.</span>
+          </li>
+          <li class="flex gap-3 items-start bg-sky-50 rounded p-3">
+            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-sky-600 text-white text-xs font-bold flex items-center justify-center">3</span>
+            <span><strong>Automated mm verification</strong> runs — measured text height (px → mm) is checked against the minimum font-size slab for the declared net quantity/volume.</span>
+          </li>
+        </ol>
+        <p class="text-xs text-slate-400 mt-4">Run a Field Inspection first, then use the coin-tap step against a staged image to trigger this check via <code>/scans/{scan_id}/font-check</code>.</p>
       `
     },
     notice: {
       color: "#2563eb",
-      title: "Show-Cause Notice Engine",
+      title: "Notice & Seizure Memo",
       body: () => `
-        <p class="text-slate-600 mb-4">Generate a sample show-cause notice draft from demo violation data.</p>
+        <p class="text-slate-600 mb-4">Generate a sample show-cause / compounding notice draft from demo violation data.</p>
         <div class="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-slate-600 mb-4 leading-relaxed">
-          <strong>Demo Draft:</strong> Notice regarding sample violation of packaging declaration standards observed at demo location, sample reference #DEMO-2026-0091. GPS tag: 26.9124°N, 75.7873°E (sample coordinates).
+          <strong>Demo Draft:</strong> Notice issued under the Legal Metrology (Packaged Commodities) Rules regarding a sample violation of mandatory packaging declaration standards observed at demo location, sample reference #DEMO-2026-0091. GPS tag: 26.9124°N, 75.7873°E (sample coordinates).
         </div>
-        <button class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#2563eb;">Download Sample Draft (Demo Only)</button>
+        <button id="notice-download-btn" class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#2563eb;">Download Sample Draft (Demo Only)</button>
       `
     },
-    register: {
+    queue: {
       color: "#334155",
-      title: "Demo Packer Directory",
+      title: "Offline Sync Queue",
       body: () => `
-        <p class="text-slate-600 mb-4">Search sample registered packer/manufacturer records:</p>
-        <input type="text" placeholder="Search demo directory..." class="tap-target w-full rounded border px-3 py-2 text-sm mb-3" style="background:#f9fafb; border-color:#d1d5db;">
-        <ul class="flex flex-col gap-2 text-sm">
-          <li class="bg-slate-50 rounded px-3 py-2">Demo Packer Co. — Reg. #DEMO-PK-0021</li>
-          <li class="bg-slate-50 rounded px-3 py-2">Sample Foods Pvt. Ltd. — Reg. #DEMO-PK-0088</li>
-          <li class="bg-slate-50 rounded px-3 py-2">Fictional Traders — Reg. #DEMO-PK-0142</li>
-        </ul>
+        <p class="text-slate-600 mb-4">Locally cached scans awaiting sync to the central ledger:</p>
+        <div id="offline-queue-list" class="flex flex-col gap-2 text-sm mb-4"></div>
+        <button id="sync-pending-btn" class="tap-target w-full rounded text-white font-semibold text-sm py-2" style="background:#334155;">Sync Pending Records</button>
       `
     }
   };
+
+  function renderOfflineQueueList() {
+    const listEl = document.getElementById("offline-queue-list");
+    if (!listEl) return;
+    let queue = [];
+    try {
+      const raw = localStorage.getItem("lmcs_offline_scan_queue");
+      queue = raw ? JSON.parse(raw) : [];
+    } catch (err) {
+      queue = [];
+    }
+    if (!Array.isArray(queue) || queue.length === 0) {
+      listEl.innerHTML = `<p class="text-sm text-slate-500 py-2">No offline-cached scans pending sync.</p>`;
+      return;
+    }
+    listEl.innerHTML = queue.map((rec) => {
+      const dt = new Date(rec.timestamp);
+      const dtLabel = isNaN(dt.getTime()) ? rec.timestamp : dt.toLocaleString();
+      return `
+        <div class="flex items-center justify-between bg-slate-50 rounded px-3 py-2">
+          <span class="text-xs text-slate-700 font-mono">${(rec.scan_id || "unknown-id").toString().slice(0, 12)}</span>
+          <span class="text-xs text-slate-500">${dtLabel}</span>
+          <span class="badge bg-amber-100 text-amber-700">${(rec.status || "pending").replace(/_/g, " ")}</span>
+        </div>
+      `;
+    }).join("");
+  }
 
   document.querySelectorAll("[data-modal]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const key = btn.getAttribute("data-modal");
       const config = modalConfig[key];
+      if (!config) return;
       modalHeader.style.background = config.color;
       modalTitle.textContent = config.title;
       modalBody.innerHTML = config.body();
       modalRoot.classList.remove("hidden");
 
       if (key === "scan") {
-        const dropZone = document.getElementById("drop-zone");
-        const fileInput = document.getElementById("scan-file-input");
+        stagedFiles = [];
+        lastScanData = null;
+        lastScanFiles = [];
+        activeImageTabIndex = 0;
 
-        dropZone.addEventListener("click", () => fileInput.click());
-        dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("bg-amber-50"); });
-        dropZone.addEventListener("dragleave", () => dropZone.classList.remove("bg-amber-50"));
-        dropZone.addEventListener("drop", (e) => {
-          e.preventDefault();
-          dropZone.classList.remove("bg-amber-50");
-          const file = e.dataTransfer.files && e.dataTransfer.files[0];
-          if (file) {
-            selectedFile = file;
-            runRealScan(file, dropZone);
+        const captureBtn = document.getElementById("btn-capture-live");
+        const galleryBtn = document.getElementById("btn-select-gallery");
+        const cameraInput = document.getElementById("camera-file-input");
+        const galleryInput = document.getElementById("gallery-file-input");
+        const stageContainer = document.getElementById("scan-stage-container");
+        const resultsContainer = document.getElementById("scan-results-container");
+        const submitBtn = document.getElementById("scan-submit-btn");
+
+        renderThumbnailRail();
+        updateSubmitButtonState();
+
+        captureBtn.addEventListener("click", () => cameraInput.click());
+        galleryBtn.addEventListener("click", () => galleryInput.click());
+
+        cameraInput.addEventListener("change", () => {
+          if (cameraInput.files && cameraInput.files.length) {
+            addFilesToStage(cameraInput.files);
+            cameraInput.value = "";
           }
         });
-        fileInput.addEventListener("change", () => {
-          const file = fileInput.files && fileInput.files[0];
-          if (file) {
-            selectedFile = file;
-            runRealScan(file, dropZone);
+
+        galleryInput.addEventListener("change", () => {
+          if (galleryInput.files && galleryInput.files.length) {
+            addFilesToStage(galleryInput.files);
+            galleryInput.value = "";
           }
+        });
+
+        submitBtn.addEventListener("click", () => {
+          if (stagedFiles.length === 0) return;
+          runRealScan([...stagedFiles], resultsContainer, stageContainer);
         });
       }
 
-      if (key === "ecommerce") {
-        document.getElementById("ecommerce-audit-btn").addEventListener("click", () => {
-          document.getElementById("ecommerce-result").classList.remove("hidden");
+      if (key === "history") {
+        const historyContainer = document.getElementById("history-table-container");
+        fetchAndRenderHistory(historyContainer);
+      }
+
+      if (key === "notice") {
+        document.getElementById("notice-download-btn").addEventListener("click", () => {
+          const target = document.createElement("div");
+          target.style.padding = "24px";
+          target.innerHTML = `
+            <h2 style="font-weight:800; font-size:16px; margin-bottom:8px;">LMCS Demo Notice</h2>
+            <p style="font-size:12px; line-height:1.6;">Notice issued under the Legal Metrology (Packaged Commodities) Rules regarding a sample violation of mandatory packaging declaration standards observed at demo location, sample reference #DEMO-2026-0091. GPS tag: 26.9124°N, 75.7873°E (sample coordinates).</p>
+          `;
+          html2pdf().set({
+            margin: 0.5,
+            filename: 'lmcs-demo-notice.pdf',
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+          }).from(target).save();
+        });
+      }
+
+      if (key === "queue") {
+        renderOfflineQueueList();
+        document.getElementById("sync-pending-btn").addEventListener("click", () => {
+          try {
+            localStorage.removeItem("lmcs_offline_scan_queue");
+          } catch (err) {
+            // ignore
+          }
+          renderOfflineQueueList();
         });
       }
     });
