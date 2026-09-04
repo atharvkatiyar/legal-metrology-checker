@@ -1,4 +1,6 @@
 from __future__ import annotations
+import asyncio
+import io
 import json
 import logging
 import os
@@ -8,6 +10,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +18,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.models.schema import ScanResult, ViolationRecord, User
+from app.services.geocoding import reverse_geocode
+from app.services.pdf_generator import generate_inspection_certificate_pdf
 
 from PIL import Image, ImageOps
 import pillow_heif
@@ -49,10 +54,9 @@ async def _save_and_normalize_upload(upload: UploadFile) -> str:
         f.write(contents)
     await upload.close()
 
-    # --- NEW: Bake EXIF orientation into the physical pixels ---
     try:
         img = Image.open(image_path)
-        img = ImageOps.exif_transpose(img) # Fixes the smartphone rotation issue
+        img = ImageOps.exif_transpose(img)
         
         if image_path.lower().endswith((".heic", ".heif")):
             new_image_path = os.path.splitext(image_path)[0] + ".jpg"
@@ -60,7 +64,6 @@ async def _save_and_normalize_upload(upload: UploadFile) -> str:
             os.remove(image_path)
             image_path = new_image_path
         else:
-            # Overwrite the original JPEG/PNG with the properly rotated pixels
             img.save(image_path)
     except Exception as e:
         logger.warning(f"EXIF rotation failed for {image_path}: {e}")
@@ -132,12 +135,6 @@ async def login(
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    Simple credential check against the local users table. Passwords
-    are compared as stored (hashed_password) -- hashing/verification
-    scheme is owned by whoever seeds the users table; this endpoint
-    only performs the lookup and comparison.
-    """
     result = await db.execute(
         select(User).where(User.officer_id == body.officer_id)
     )
@@ -162,10 +159,6 @@ async def get_scan_history(
     offset: int = 0,
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """
-    Retrieves past inspection records from the local SQLite ledger.
-    Satisfies SIH Requirement: 'Search and retrieval facility for previously scanned products'.
-    """
     query = select(ScanResult).order_by(ScanResult.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     scans = result.scalars().all()
@@ -188,26 +181,10 @@ async def get_scan_history(
 async def init_scan(
     images: list[UploadFile] = File(...),
     officer_id: Optional[str] = Form(None),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    Main automated pipeline. Accepts one or more images of a single
-    product (e.g. front + base + side panel), aggregates extracted
-    fields across all of them, and evaluates compliance once.
-
-    Optionally accepts officer_id (as a form field) to tag the scan
-    with the inspecting officer for offline-first sync and dashboard
-    filtering. New scans are always created with sync_status set to
-    "pending_sync" until pushed to the cloud backend via /scans/sync.
-
-    Font-size checking is intentionally NOT performed here because it
-    requires a manually supplied tap point. It is handled separately by
-    /scans/{scan_id}/font-check.
-
-    Per-image OCR/field-mapping failures are handled gracefully: a
-    failing image is skipped for extraction purposes rather than
-    crashing the whole request.
-    """
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
     parsed_officer_id: Optional[uuid.UUID] = None
@@ -231,14 +208,17 @@ async def init_scan(
             )
             continue
         image_paths.append(path)
+    
     if not image_paths:
         raise HTTPException(
             status_code=400,
             detail="No valid images were uploaded.",
         )
+        
     per_image_ocr: list[list[dict[str, Any]]] = []
     per_image_texts: list[str] = []
     per_image_raw_results: list[dict[str, Any]] = []
+    
     for idx, path in enumerate(image_paths):
         try:
             ocr_tokens = await extract_text_from_image(path)
@@ -269,9 +249,11 @@ async def init_scan(
             if isinstance(field_result, dict):
                 field_result["_image_index"] = idx
         per_image_raw_results.append(image_mapping_result)
+        
     merged_raw_results = _merge_mapping_results(per_image_raw_results)
     mapping_output = build_field_mapping_output(merged_raw_results)
     compliance_result = check_compliance(mapping_output)
+    
     field_to_image_index: dict[str, Optional[int]] = {}
     for source_key, target_key in _FIELD_KEY_MAP.items():
         source_result = merged_raw_results.get(source_key)
@@ -280,7 +262,9 @@ async def init_scan(
             if isinstance(source_result, dict)
             else None
         )
+        
     combined_raw_text = "\n\n".join(per_image_texts)
+    
     scan_result = ScanResult(
         id=uuid.uuid4(),
         product_id=None,
@@ -298,8 +282,11 @@ async def init_scan(
             ],
         },
         extracted_fields=merged_raw_results,
+        latitude=latitude,
+        longitude=longitude,
         created_at=utcnow(),
     )
+    
     db.add(scan_result)
     for violation in compliance_result.violations:
         db.add(
@@ -316,8 +303,10 @@ async def init_scan(
                 legal_reference=violation.legal_reference,
             )
         )
+        
     await db.commit()
     await db.refresh(scan_result)
+    
     return {
         "scan_id": str(scan_result.id),
         "status": scan_result.status,
@@ -406,6 +395,55 @@ async def get_scan(
     }
 
 
+@router.get("/scans/{scan_id}/pdf")
+async def get_scan_pdf(
+    scan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    result = await db.execute(
+        select(ScanResult)
+        .options(selectinload(ScanResult.violations))
+        .where(ScanResult.id == scan_id)
+    )
+    scan = result.scalar_one_or_none()
+
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    resolved_address = scan.location_address
+    if (
+        resolved_address is None
+        and scan.latitude is not None
+        and scan.longitude is not None
+    ):
+        resolved_address = await asyncio.to_thread(
+            reverse_geocode, scan.latitude, scan.longitude
+        )
+        if resolved_address:
+            scan.location_address = resolved_address
+            await db.commit()
+            await db.refresh(scan)
+
+    cr_no = f"CR-{scan.created_at.year}-{str(scan.id)[:8].upper()}"
+
+    pdf_bytes = generate_inspection_certificate_pdf(
+        scan=scan,
+        violations=list(scan.violations),
+        cr_no=cr_no,
+        resolved_address=resolved_address,
+    )
+
+    filename = f"lmcs-certificate-{str(scan.id)[:8]}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
+
+
 class FontCheckRequest(BaseModel):
     tap_x: int
     tap_y: int
@@ -419,19 +457,6 @@ async def font_check(
     body: FontCheckRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    OPTIONAL, separate from the main automated pipeline. Requires a
-    manually supplied tap point identifying the reference coin's
-    approximate location. Operates on the first image of a multi-image
-    scan.
-
-    If the measured font is non-compliant, a FONT_SIZE ViolationRecord
-    is persisted against the scan and the scan's stored compliance
-    result (is_compliant / compliance_score) is updated to reflect it
-    -- unlike the original skeleton, this now DOES mutate the stored
-    main scan result, since font-size is a real Rule 9 violation once
-    measured.
-    """
     result = await db.execute(
         select(ScanResult).where(ScanResult.id == scan_id)
     )
@@ -504,10 +529,6 @@ async def font_check(
 async def sync_scans(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """
-    Offline-first sync: pushes all locally-pending scan results to the
-    cloud backend (Supabase REST endpoint), then marks them synced.
-    """
     result = await db.execute(
         select(ScanResult).where(ScanResult.sync_status == "pending_sync")
     )
