@@ -7,7 +7,6 @@ import io
 import logging
 import os
 import re
-import unicodedata
 from typing import Any
 
 import cv2
@@ -19,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _reader: easyocr.Reader | None = None
 
+# FIX (Issue 4): real ₹ character, not the mis-decoded "â‚¹" mojibake.
 _TRIGGER_PATTERN = re.compile(
     r'(?:mrp|₹|rs\.?|mfd|exp|\d{2}[/.-]\d{2})',
     re.IGNORECASE,
@@ -35,13 +35,12 @@ _ROTATIONS: tuple[int | None, ...] = (
 def _get_reader() -> easyocr.Reader:
     """
     Lazily initialize EasyOCR once.
-    CPU is used deliberately instead of MPS because repeated OCR
-    on large images can cause excessive memory pressure on macOS.
+    English-only per current scope (Hindi support removed).
     """
     global _reader
     if _reader is None:
         _reader = easyocr.Reader(
-            ["en", "hi"],
+            ["en"],
             gpu=False,
             verbose=False,
         )
@@ -78,31 +77,45 @@ def _rotate(image_array: np.ndarray, rotation_code: int | None) -> np.ndarray:
 
 def _score_results(results: list[Any]) -> float:
     """
-    Rewards actual word lengths and statutory keywords to prevent 
-    "barcode shattering" (where sideways barcodes generate 50+ tiny 
+    Rewards actual word lengths and statutory keywords to prevent
+    "barcode shattering" (where sideways barcodes generate 50+ tiny
     garbage characters that artificially inflate the score).
+
+    Never raises: any malformed entry is skipped rather than allowed
+    to propagate, since a single bad detection must not disqualify an
+    otherwise-good rotation candidate.
     """
     if not results:
         return 0.0
 
     score = 0.0
     for r in results:
-        if not isinstance(r, (list, tuple)) or len(r) != 3:
+        try:
+            if not isinstance(r, (list, tuple)) or len(r) != 3:
+                continue
+
+            text = str(r[1]).strip()
+            conf = float(r[2])
+
+            # Penalize 1 or 2 character noise (likely barcode lines or color dots)
+            if len(text) <= 2:
+                score += conf * 0.1
+            else:
+                # Reward longer coherent strings
+                score += conf * len(text)
+
+            # MASSIVE BONUS: If this rotation reveals a compliance keyword,
+            # it is very likely the correct rotation.
+            if re.search(
+                r'(?:mrp|₹|rs\.?|net|qty|mfd|exp|batch|date|manufactur)',
+                text,
+                re.IGNORECASE,
+            ):
+                score += 100.0
+        except (TypeError, ValueError, IndexError):
+            # FIX (Issue 5): don't let one malformed detection blow up
+            # scoring for the whole rotation candidate.
             continue
-            
-        text = str(r[1]).strip()
-        conf = float(r[2])
-
-        # Penalize 1 or 2 character noise (likely barcode lines or color dots)
-        if len(text) <= 2:
-            score += conf * 0.1
-        else:
-            # Reward longer coherent strings
-            score += conf * len(text)
-
-        # MASSIVE BONUS: If this rotation reveals a compliance keyword, it is the correct rotation.
-        if re.search(r'(?:mrp|₹|rs\.?|net|qty|mfd|exp|batch|date|manufactur)', text, re.IGNORECASE):
-            score += 100.0
 
     return score
 
@@ -120,12 +133,26 @@ def _detect_best_rotation(
     so a label photo taken sideways or upside-down otherwise produces
     near-total gibberish that the downstream regex/field-mapping
     engine can never recover from.
+
+    FIX (Issue 5): every step of this probe is isolated with its own
+    try/except so a single failed rotation (readtext exception, or a
+    scoring exception) degrades gracefully to "skip this candidate"
+    rather than propagating out to the caller's outermost handler and
+    discarding all OCR tokens for the whole image.
     """
     best_array = image_array
     best_score = -1.0
 
     for rotation_code in _ROTATIONS:
-        candidate = _rotate(image_array, rotation_code)
+        try:
+            candidate = _rotate(image_array, rotation_code)
+        except Exception:
+            logger.exception(
+                "Rotation step failed for rotation_code=%s",
+                rotation_code,
+            )
+            continue
+
         try:
             results = ocr_reader.readtext(candidate, detail=1)
         except Exception:
@@ -135,28 +162,20 @@ def _detect_best_rotation(
             )
             continue
 
-        score = _score_results(results)
+        try:
+            score = _score_results(results)
+        except Exception:
+            logger.exception(
+                "Rotation-probe scoring failed for rotation_code=%s",
+                rotation_code,
+            )
+            continue
+
         if score > best_score:
             best_score = score
             best_array = candidate
 
     return best_array
-
-
-def _detect_language(text: str) -> str:
-    """
-    Conservative English/Hindi classification.
-    Devanagari letters indicate Hindi. Devanagari digits or punctuation
-    alone do not.
-    """
-    if not text:
-        return "en"
-    for char in text:
-        if "\u0900" <= char <= "\u097F":
-            category = unicodedata.category(char)
-            if category.startswith("L") or category.startswith("M"):
-                return "hi"
-    return "en"
 
 
 def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
@@ -166,8 +185,11 @@ def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
         "text": string,
         "bbox": [[x,y], [x,y], [x,y], [x,y]],
         "confidence": float,
-        "language": "en" | "hi"
+        "language": "en"
     }
+
+    Language is fixed to "en" -- Hindi detection/support has been
+    removed from this module per current scope.
     """
     tokens: list[dict[str, Any]] = []
     for result in results:
@@ -186,7 +208,7 @@ def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
                 "text": text,
                 "bbox": bbox_list,
                 "confidence": confidence_value,
-                "language": _detect_language(text),
+                "language": "en",
             }
         )
     return tokens

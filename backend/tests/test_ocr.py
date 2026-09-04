@@ -37,7 +37,7 @@ def test_to_ocr_tokens():
     assert tokens[0]["confidence"] == 0.96
     assert tokens[0]["language"] == "en"
 
-    assert tokens[1]["language"] == "hi"
+    assert tokens[1]["language"] == "en"
 
     json.dumps(tokens)
 
