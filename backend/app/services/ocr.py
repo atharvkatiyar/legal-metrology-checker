@@ -7,7 +7,6 @@ import io
 import logging
 import os
 import re
-import unicodedata
 from typing import Any
 
 import cv2
@@ -20,21 +19,17 @@ logger = logging.getLogger(__name__)
 _reader: easyocr.Reader | None = None
 
 _TRIGGER_PATTERN = re.compile(
-    r'(?:mrp|₹|rs\.?|mfd|exp|\d{2}[/.-]\d{2})',
+    r'(?:mrp|â‚¹|rs\.?|mfd|exp|\d{2}[/.-]\d{2})',
     re.IGNORECASE,
 )
 
 
 def _get_reader() -> easyocr.Reader:
-    """
-    Lazily initialize EasyOCR once.
-    CPU is used deliberately instead of MPS because repeated OCR
-    on large images can cause excessive memory pressure on macOS.
-    """
+    
     global _reader
     if _reader is None:
         _reader = easyocr.Reader(
-            ["en", "hi"],
+            ["en"],
             gpu=False,
             verbose=False,
         )
@@ -45,10 +40,7 @@ def _resize_for_ocr(
     image_array: np.ndarray,
     max_dimension: int = 2000,
 ) -> np.ndarray:
-    """
-    Reduce excessively large images before OCR to limit memory usage.
-    Aspect ratio is preserved.
-    """
+   
     height, width = image_array.shape[:2]
     largest_dimension = max(height, width)
     if largest_dimension <= max_dimension:
@@ -63,32 +55,8 @@ def _resize_for_ocr(
     )
 
 
-def _detect_language(text: str) -> str:
-    """
-    Conservative English/Hindi classification.
-    Devanagari letters indicate Hindi. Devanagari digits or punctuation
-    alone do not.
-    """
-    if not text:
-        return "en"
-    for char in text:
-        if "\u0900" <= char <= "\u097F":
-            category = unicodedata.category(char)
-            if category.startswith("L") or category.startswith("M"):
-                return "hi"
-    return "en"
-
-
 def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
-    """
-    Convert EasyOCR detail=1 results to the application's token schema:
-    {
-        "text": string,
-        "bbox": [[x,y], [x,y], [x,y], [x,y]],
-        "confidence": float,
-        "language": "en" | "hi"
-    }
-    """
+    
     tokens: list[dict[str, Any]] = []
     for result in results:
         if not isinstance(result, (list, tuple)) or len(result) != 3:
@@ -106,19 +74,14 @@ def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
                 "text": text,
                 "bbox": bbox_list,
                 "confidence": confidence_value,
-                "language": _detect_language(text),
+                "language": "en",
             }
         )
     return tokens
 
 
 def _preprocess_dot_matrix(image_array: np.ndarray) -> np.ndarray:
-    """
-    Recovers faint / low-contrast / dot-matrix stamped text (e.g. MRP or
-    batch codes stamped on can bottoms or crimps) via CLAHE contrast
-    normalization, adaptive thresholding, and morphological closing to
-    fuse isolated dot-matrix dots into cohesive alphanumeric strokes.
-    """
+   
     if image_array.ndim == 3:
         if image_array.shape[-1] == 4:
             gray = cv2.cvtColor(image_array, cv2.COLOR_RGBA2GRAY)
@@ -148,11 +111,7 @@ def _preprocess_dot_matrix(image_array: np.ndarray) -> np.ndarray:
 
 
 def _should_trigger_second_pass(tokens: list[dict[str, Any]]) -> bool:
-    """
-    Triggers the dot-matrix preprocessing pass when Pass 1 found no
-    currency/price/date-shaped signal at all, or when average token
-    confidence is low. An empty token list always triggers Pass 2.
-    """
+    
     if not tokens:
         return True
 
@@ -201,11 +160,7 @@ def _merge_and_deduplicate(
     primary_tokens: list[dict[str, Any]],
     secondary_tokens: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """
-    Merges Pass 1 and Pass 2 tokens. When two tokens' bounding boxes
-    overlap with IoU > 0.5, the higher-confidence token is retained;
-    non-overlapping tokens from both passes are kept.
-    """
+    
     merged: list[dict[str, Any]] = list(primary_tokens)
 
     for candidate in secondary_tokens:
