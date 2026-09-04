@@ -8,12 +8,12 @@
     "CONSUMER_CARE": "1-800-208-1930 / contactus@himalayawellness.com"
   },
   {
-    "image": "IMG_004 (Nescafé Sachet).jpg",
-    "MRP": "MRP ₹10.00",
-    "NET_QUANTITY": null,
-    "MANUFACTURER_ADDRESS": "NESTLÉ INDIA LTD., KIADB INDUSTRIAL AREA, NANJANGUD, MYSORE, (KARNATAKA) - 571 302",
-    "MANUFACTURING_DATE": "FEB/26",
-    "CONSUMER_CARE": "1800 103 1947 / WECARE@IN.NESTLE.COM"
+  "image": "IMG_004 (Nescafé Sachet).jpg",
+  "MRP": "MRP ₹10.00 (incl. of all taxes)",
+  "NET_QUANTITY": "3.6 g",
+  "MANUFACTURER_ADDRESS": "NESTLÉ INDIA LTD., KIADB INDUSTRIAL AREA, NANJANGUD, MYSORE, (KARNATAKA) - 571 302",
+  "MANUFACTURING_DATE": "FEB/26",
+  "CONSUMER_CARE": "1800 103 1947 / WECARE@IN.NESTLE.COM"
   },
   {
     "image": "IMG_005 (Joy Face Scrub).jpg",
