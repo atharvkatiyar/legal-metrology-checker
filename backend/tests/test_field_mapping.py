@@ -1,4 +1,4 @@
-mport sys
+import sys
 from pathlib import Path
 
 # Add the backend directory to Python's import path.
@@ -942,6 +942,52 @@ for _s in ["MRP ₹249", "M . R . P . ₹249", "  Manufactured   by  ABC   Foods
     _norm_text_only, _ = _norm_mapped(_s)
     check(f"Sync check: _normalize_text_with_map output matches frozen normalize_text for {_s!r}",
           _norm_text_only == _norm_frozen(_s), f"mapped={_norm_text_only!r} frozen={_norm_frozen(_s)!r}")
+
+
+# ===========================================================================
+# AUG 28 — integration with the actual merged OCR service output
+# ===========================================================================
+# app/services/ocr.py calls EasyOCR with detail=0 and joins results into a
+# single plain string (no bbox/confidence/per-token language at all). This
+# is a real, narrower shape than the full four-field token schema Field
+# Mapping also supports. Confirm the pipeline still degrades safely: values
+# still extract, and metadata fields present themselves in a safe default
+# form (language defaults to 'en', bbox is [] for the Aug 27 fields) rather
+# than crashing or fabricating evidence that was never provided.
+
+_real_ocr_shaped_text = ("MRP Rs 249 Net Qty 500 g Manufactured by ABC Foods Pvt Ltd "
+                          "Mfg Date 01/06/2026 Consumer Care 1800-123-4567")
+result = map_fields(_real_ocr_shaped_text)
+check("Real OCR shape (plain string, detail=0): MRP still resolves",
+      result["MRP"]["value"] == 249.0, f"got {result['MRP']}")
+check("Real OCR shape: Net Qty still resolves",
+      result["NET_QUANTITY"]["value"] == {"amount": 500.0, "unit": "g"}, f"got {result['NET_QUANTITY']}")
+check("Real OCR shape: Manufacturer still resolves despite no token metadata",
+      result["MANUFACTURER_ADDRESS"]["value"] == "ABC Foods Pvt Ltd", f"got {result['MANUFACTURER_ADDRESS']}")
+check("Real OCR shape: Manufacturer language safely defaults to 'en' (not fabricated)",
+      result["MANUFACTURER_ADDRESS"]["language"] == "en", f"got {result['MANUFACTURER_ADDRESS']['language']}")
+check("Real OCR shape: Manufacturer bbox is empty, not guessed",
+      result["MANUFACTURER_ADDRESS"]["bbox"] == [], f"got {result['MANUFACTURER_ADDRESS']['bbox']}")
+check("Real OCR shape: Mfg Date still resolves",
+      result["MANUFACTURING_DATE"]["value"] == "2026-06-01", f"got {result['MANUFACTURING_DATE']}")
+check("Real OCR shape: Consumer Care still resolves",
+      result["CONSUMER_CARE"]["value"] == {"phone": "1800-123-4567", "email": None}, f"got {result['CONSUMER_CARE']}")
+
+import json as _json28
+try:
+    _json28.dumps(result)
+    _real_ocr_json_ok = True
+except (TypeError, ValueError):
+    _real_ocr_json_ok = False
+check("Real OCR shape: result is JSON-serializable", _real_ocr_json_ok)
+
+# EasyOCR's own readtext(detail=0) return type is List[str]; the empty-OCR
+# failure path in app/services/ocr.py falls back to "" on any exception.
+result_empty_ocr = map_fields("")
+check("Real OCR shape: empty OCR text (ocr.py's own failure fallback) -> no crash, all fields None",
+      all(result_empty_ocr[k]["value"] is None for k in
+          ("MRP", "NET_QUANTITY", "MANUFACTURER_ADDRESS", "MANUFACTURING_DATE", "CONSUMER_CARE")),
+      f"got {result_empty_ocr}")
 
 
 print("\n" + "=" * 60)
