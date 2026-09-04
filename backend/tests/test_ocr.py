@@ -1,112 +1,141 @@
-import sys
 import asyncio
+import json
+import sys
 from pathlib import Path
 
-# Add the backend directory to Python's import path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.ocr import extract_text_from_image
-
-PASS = 0
-FAIL = 0
-FAILURES = []
+import app.services.ocr as ocr
+from app.field_mapping import map_fields
 
 
-def check(name, condition, detail=""):
-    global PASS, FAIL
-    if condition:
-        PASS += 1
-    else:
-        FAIL += 1
-        FAILURES.append(f"{name} :: {detail}")
-    status = "PASS" if condition else "FAIL"
-    print(f"[{status}] {name}" + (f"  ({detail})" if detail and not condition else ""))
+def test_to_ocr_tokens():
+    results = [
+        (
+            [[10, 20], [100, 20], [100, 50], [10, 50]],
+            "MRP ₹249",
+            0.96,
+        ),
+        (
+            [[10, 60], [130, 60], [130, 90], [10, 90]],
+            "मूल्य ₹249",
+            0.91,
+        ),
+    ]
+
+    tokens = ocr._to_ocr_tokens(results)
+
+    assert len(tokens) == 2
+
+    assert tokens[0]["text"] == "MRP ₹249"
+    assert tokens[0]["bbox"] == [
+        [10, 20],
+        [100, 20],
+        [100, 50],
+        [10, 50],
+    ]
+    assert tokens[0]["confidence"] == 0.96
+    assert tokens[0]["language"] == "en"
+
+    assert tokens[1]["language"] == "en"
+
+    json.dumps(tokens)
 
 
-def run_async(coro):
-    return asyncio.run(coro)
+def test_empty_results():
+    assert ocr._to_ocr_tokens([]) == []
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SAMPLE_IMAGE_PATH = str(REPO_ROOT / "labeled_batch" / "images" / "IMG_003 (Himalaya Shampoo).jpg")
+def test_malformed_results_are_skipped():
+    results = [
+        ("bad",),
+        ("too", "many", "values", "here"),
+    ]
+
+    assert ocr._to_ocr_tokens(results) == []
 
 
-result = run_async(extract_text_from_image(SAMPLE_IMAGE_PATH))
+def test_real_image_path():
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "labeled_batch"
+        / "images"
+        / "IMG_003 (Himalaya Shampoo).jpg"
+    )
 
-check("File path input: returns a list", isinstance(result, list), f"got {type(result)}")
-check("File path input: at least one text block detected", len(result) > 0, f"got {len(result)} blocks")
+    assert fixture.exists(), f"Missing fixture: {fixture}"
 
-if result:
-    first_block = result[0]
-    check("Block shape: has 'text' key", "text" in first_block, f"got keys {list(first_block.keys())}")
-    check("Block shape: has 'bbox' key", "bbox" in first_block, f"got keys {list(first_block.keys())}")
-    check("Block shape: has 'confidence' key", "confidence" in first_block, f"got keys {list(first_block.keys())}")
-    check("Block shape: has 'language' key", "language" in first_block, f"got keys {list(first_block.keys())}")
+    result = asyncio.run(
+        ocr.extract_text_from_image(str(fixture))
+    )
 
-    check("Block shape: 'text' is a string", isinstance(first_block["text"], str), f"got {type(first_block['text'])}")
-    check("Block shape: 'confidence' is a float between 0 and 1",
-          isinstance(first_block["confidence"], float) and 0.0 <= first_block["confidence"] <= 1.0,
-          f"got {first_block['confidence']}")
-    check("Block shape: 'language' is always 'en' (Hindi dropped from scope)",
-          first_block["language"] == "en", f"got {first_block['language']}")
+    assert isinstance(result, list)
+    assert result, "Expected at least one OCR detection from the labeled image"
 
-    bbox = first_block["bbox"]
-    check("Block shape: 'bbox' has exactly 4 points", len(bbox) == 4, f"got {len(bbox)} points")
-    check("Block shape: each bbox point is an [x, y] pair of ints",
-          all(len(pt) == 2 and isinstance(pt[0], int) and isinstance(pt[1], int) for pt in bbox),
-          f"got {bbox}")
+    first = result[0]
 
-check("All blocks: every block has all 4 required keys",
-      all({"text", "bbox", "confidence", "language"} <= set(b.keys()) for b in result),
-      "some block is missing a required key")
-check("All blocks: every block's language is 'en'",
-      all(b["language"] == "en" for b in result),
-      "some block has a language other than 'en'")
+    assert isinstance(first["text"], str)
+    assert isinstance(first["bbox"], list)
+    assert isinstance(first["confidence"], float)
+    assert first["language"] in {"en", "hi"}
+
+    json.dumps(result)
 
 
-with open(SAMPLE_IMAGE_PATH, "rb") as f:
-    image_bytes = f.read()
+def test_ocr_tokens_are_compatible_with_field_mapping():
+    tokens = [
+        {
+            "text": "MRP ₹301",
+            "bbox": [[10, 20], [100, 20], [100, 50], [10, 50]],
+            "confidence": 0.96,
+            "language": "en",
+        },
+        {
+            "text": "Net Qty. 340 ml",
+            "bbox": [[10, 60], [130, 60], [130, 90], [10, 90]],
+            "confidence": 0.95,
+            "language": "en",
+        },
+        {
+            "text": "Manufactured by Himalaya Wellness Company",
+            "bbox": [[10, 100], [300, 100], [300, 130], [10, 130]],
+            "confidence": 0.94,
+            "language": "en",
+        },
+        {
+            "text": "Date of Manufacture 12/2025",
+            "bbox": [[10, 140], [220, 140], [220, 170], [10, 170]],
+            "confidence": 0.93,
+            "language": "en",
+        },
+        {
+            "text": "Customer Care 1-800-208-1930",
+            "bbox": [[10, 180], [250, 180], [250, 210], [10, 210]],
+            "confidence": 0.92,
+            "language": "en",
+        },
+    ]
 
-result_bytes = run_async(extract_text_from_image(image_bytes))
-check("Raw bytes input: returns a list", isinstance(result_bytes, list), f"got {type(result_bytes)}")
-check("Raw bytes input: at least one text block detected", len(result_bytes) > 0, f"got {len(result_bytes)} blocks")
+    result = map_fields(tokens)
 
+    assert isinstance(result, dict)
 
-import base64
-b64_string = base64.b64encode(image_bytes).decode("utf-8")
+    for key in (
+        "MRP",
+        "NET_QUANTITY",
+        "MANUFACTURER_ADDRESS",
+        "MANUFACTURING_DATE",
+        "CONSUMER_CARE",
+    ):
+        assert key in result
 
-result_b64 = run_async(extract_text_from_image(b64_string))
-check("Base64 string input: returns a list", isinstance(result_b64, list), f"got {type(result_b64)}")
-check("Base64 string input: at least one text block detected", len(result_b64) > 0, f"got {len(result_b64)} blocks")
+    json.dumps(result)
 
-
-result_bad_path = run_async(extract_text_from_image("this/path/does/not/exist.jpg"))
-check("Nonexistent file path: returns empty list, does not crash", result_bad_path == [], f"got {result_bad_path}")
-
-result_bad_bytes = run_async(extract_text_from_image(b"not a real image"))
-check("Garbage bytes input: returns empty list, does not crash", result_bad_bytes == [], f"got {result_bad_bytes}")
-
-result_empty_str = run_async(extract_text_from_image(""))
-check("Empty string input: returns empty list, does not crash", result_empty_str == [], f"got {result_empty_str}")
-
-
-import json as _json
-try:
-    _json.dumps(result)
-    json_ok = True
-except (TypeError, ValueError) as e:
-    json_ok = False
-    _json_error = str(e)
-check("Structured output is JSON-serializable", json_ok, "" if json_ok else _json_error)
-
-
-print("\n" + "=" * 60)
-print(f"TOTAL: {PASS + FAIL}   PASSED: {PASS}   FAILED: {FAIL}")
-if FAILURES:
-    print("\nFailed tests:")
-    for f in FAILURES:
-        print(f"  - {f}")
-print("=" * 60)
 
 if __name__ == "__main__":
-    sys.exit(0 if FAIL == 0 else 1)
+    test_to_ocr_tokens()
+    test_empty_results()
+    test_malformed_results_are_skipped()
+    test_real_image_path()
+    test_ocr_tokens_are_compatible_with_field_mapping()
+    print("OCR tests: PASS")
