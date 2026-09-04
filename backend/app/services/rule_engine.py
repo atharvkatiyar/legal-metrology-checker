@@ -101,7 +101,7 @@ def _legal_reference_for(field_name: str) -> str | None:
     """
     Build a human-readable legal citation from rules.json's clause +
     penalty_ref, e.g. "Rule 6(1)(e) -- Section 36(1) of Legal
-    Metrology Act, 2009".
+    Metrology Act, 2009". Used by format checks (mrp / net_quantity).
     """
     rule = RULES_BY_FIELD.get(field_name)
     if rule is None:
@@ -135,9 +135,11 @@ def check_presence(fields: dict[str, ExtractedField]) -> list[Violation]:
     """
     Presence-only checks for every mandatory field.
 
-    Severity and legal_reference now come from rules.json (via
-    _severity_for / _legal_reference_for) instead of a hardcoded
-    dict, so this stays in sync with Role 1's spec automatically.
+    Iterates the loaded rules_config (RULES_BY_FIELD) for each
+    mandatory field and extracts the raw `clause` directly from
+    rules.json, passing it as `legal_reference` on the Violation --
+    this keeps the citation tied 1:1 to Role 1's source clause rather
+    than a combined clause+penalty_ref string.
 
     bbox is intentionally None here: a MISSING field has no location
     on the image to box -- there is nothing to draw a red box around.
@@ -148,13 +150,16 @@ def check_presence(fields: dict[str, ExtractedField]) -> list[Violation]:
         field = fields.get(field_name)
 
         if not is_field_present(field):
+            rule = RULES_BY_FIELD.get(field_name)
+            clause = rule.get("clause") if rule else None
+
             violations.append(
                 Violation(
                     field_name=field_name,
                     issue=f"'{field_name}' is missing from the label",
                     severity=_severity_for(field_name),
                     bbox=None,
-                    legal_reference=_legal_reference_for(field_name),
+                    legal_reference=clause,
                 )
             )
 
@@ -297,9 +302,10 @@ def check_compliance(mapping_output: FieldMappingOutput) -> ComplianceResult:
     """
     Main entry point.
 
-    Runs presence checks (all mandatory fields) then format checks
-    (mrp, net_quantity -- the only fields with machine-checkable
-    format rules as of Sep 4).
+    Runs presence checks (all mandatory fields, using rules_config /
+    RULES_BY_FIELD to source each field's legal `clause` directly)
+    then format checks (mrp, net_quantity -- the only fields with
+    machine-checkable format rules as of Sep 4).
     """
     violations: list[Violation] = []
 

@@ -215,8 +215,8 @@ class FieldResult:
 # Shared scoring constants (simple, deterministic, additive)
 # ---------------------------------------------------------------------------
 
-WINDOW = 40              # max char window a label may search for a value
-AMOUNT_ONLY_WINDOW = 15  # tight window for currency-less "MRP 249" fallback
+WINDOW = 80
+AMOUNT_ONLY_WINDOW = 15
 
 LABEL_BASE = 0.5
 CURRENCY_BONUS = 0.3
@@ -293,36 +293,37 @@ MRP_RECOVERY_WINDOW = 140
 # ---------------------------------------------------------------------------
 
 NET_QTY_LABELS = [
-    (r"\bNet\s*Quantity\b", "Net Quantity"),
-    (r"\bNet\s*Qty\b", "Net Qty"),
-    (r"\bNet\s*Weight\b", "Net Weight"),
-    (r"\bNet\s*Wt\b", "Net Wt"),
-    (r"\bNet\s*Vol\b", "Net Vol"),
+    (r"\bNet\s*Quantity\b", "Net Quantity"), (r"\bNet\s*Qty\b", "Net Qty"),
+    (r"\bNet\s*Weight\b", "Net Weight"), (r"\bNet\s*Wt\b", "Net Wt"),
+    (r"\bNet\s*Vol\b", "Net Vol"), (r"\bQuantity\b", "Quantity"),
+    (r"\bWeight\b", "Weight"), (r"\bContents\b", "Contents"),
 ]
 
 NET_QTY_NEGATIVE = [
     r"\bProtein\b", r"\bFat\b", r"\bCarbohydrate\b", r"\bServing\s*Size\b",
-    r"\bPer\s*Serving\b", r"\bEnergy\b", r"\bCalories\b", r"\bPack\s*of\b",
-    r"\bServings?\b",
+    r"\bPer\s*Serving\b", r"\bEnergy\b", r"\bCalories\b", r"\bPack\s*of\b", r"\bServings?\b",
 ]
 
 UNIT_RE = (
     r"(milligrams?|kilograms?|millilitres?|milliliters?|litres?|liters?|"
-    r"grams?|mg|kg|g|ml|mL|ML|l|L)"
+    r"grams?|mg|kg|g|ml|mL|ML|l|L|"
+    r"pieces?|pcs?|units?|u|n|numbers?|cigarettes?|sticks?|tablets?|pills?)"
 )
 QUANTITY_VALUE_RE = re.compile(
-    r"(?<![\d.,])(?P<sign>[+-])?\s*(?P<amount_raw>\d[\d,]*(?:\.\d+)?)"
-    r"\s*(?P<unit>" + UNIT_RE + r")\b",
+    r"(?<![\d.,])(?P<sign>[+-])?\s*(?P<amount_raw>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>" + UNIT_RE + r")\b",
     re.IGNORECASE,
 )
 
 UNIT_NORMALIZE = {
     "l": "l", "litre": "l", "litres": "l", "liter": "l", "liters": "l",
-    "ml": "ml", "millilitre": "ml", "millilitres": "ml",
-    "milliliter": "ml", "milliliters": "ml",
-    "g": "g", "gram": "g", "grams": "g",
-    "kg": "kg", "kilogram": "kg", "kilograms": "kg",
+    "ml": "ml", "millilitre": "ml", "millilitres": "ml", "milliliter": "ml", "milliliters": "ml",
+    "g": "g", "gram": "g", "grams": "g", "kg": "kg", "kilogram": "kg", "kilograms": "kg",
     "mg": "mg", "milligram": "mg", "milligrams": "mg",
+    "piece": "pieces", "pieces": "pieces", "pc": "pieces", "pcs": "pieces",
+    "unit": "units", "units": "units", "u": "units",
+    "n": "units", "number": "units", "numbers": "units",
+    "cigarette": "cigarettes", "cigarettes": "cigarettes", "stick": "sticks", "sticks": "sticks",
+    "tablet": "tablets", "tablets": "tablets", "pill": "pills", "pills": "pills"
 }
 
 
@@ -840,7 +841,8 @@ FIELD_KEYWORDS = {
     },
     "MANUFACTURING_DATE": {
         "en": ["Mfg Date", "Mfd Date", "Manufacturing Date", "Manufactured Date",
-               "Date of Manufacture", "Packed On", "Packing Date"],
+               "Date of Manufacture", "Packed On", "Packing Date",
+               "MFD", "MFG"],
         "hi": [],
     },
     "CONSUMER_CARE": {
@@ -1030,12 +1032,15 @@ def _mfg_date_boundaries(text: str) -> List[int]:
 MANUFACTURER_LABELS = [
     (r"\bManufactured\s*&\s*Marketed\s*by\b", "Manufactured & Marketed by"),
     (r"\bManufactured\s*and\s*Marketed\s*by\b", "Manufactured and Marketed by"),
+    (r"\bBrand\s*Owned\s*and\s*Mkt\s*by\b", "Brand Owned and Mkt by"),
+    (r"\bBrand\s*Owned\s*&\s*Mkt\s*by\b", "Brand Owned & Mkt by"),
     (r"\bManufactured\s*by\b", "Manufactured by"),
     (r"\bManufactured\s*for\b", "Manufactured for"),
-    (r"\bMarketed\s*by\b", "Marketed by"),
-    (r"\bMfd\.?\s*by\b", "Mfd. by"),
-    (r"\bMfg\.?\s*by\b", "Mfg. by"),
-    (r"\bManufacturer\b", "Manufacturer"),
+    (r"\bMarketed\s*by\b", "Marketed by"), (r"\bMkt\.?\s*by\b", "Mkt. by"),
+    (r"\bMfd\.?\s*by\b", "Mfd. by"), (r"\bMfg\.?\s*by\b", "Mfg. by"),
+    (r"\bManufacturer\b", "Manufacturer"), (r"\bImported\s*by\b", "Imported by"),
+    (r"\bPacked\s*by\b", "Packed by"), (r"\bPkd\.?\s*by\b", "Pkd. by"),
+    (r"\bProduced\s*by\b", "Produced by"),
 ]
 
 MANUFACTURER_WINDOW = 120  # an address block needs more room than a price/qty token
@@ -1095,10 +1100,11 @@ MFG_DATE_LABELS = [
     (r"\bDate\s*of\s*Manufacture\b", "Date of Manufacture"),
     (r"\bManufacturing\s*Date\b", "Manufacturing Date"),
     (r"\bManufactured\s*Date\b", "Manufactured Date"),
-    (r"\bMfg\.?\s*Date\b", "Mfg Date"),
-    (r"\bMfd\.?\s*Date\b", "Mfd Date"),
-    (r"\bPacking\s*Date\b", "Packing Date"),
-    (r"\bPacked\s*On\b", "Packed On"),
+    (r"\bMfg\.?\s*Date\b", "Mfg Date"), (r"\bMfd\.?\s*Date\b", "Mfd Date"),
+    (r"\bPacking\s*Date\b", "Packing Date"), (r"\bPacked\s*On\b", "Packed On"),
+    (r"\bDate\s*of\s*Packaging\b", "Date of Packaging"),
+    (r"\bPkd\.?\s*Date\b", "Pkd Date"),
+    (r"\bMFD\b", "MFD"), (r"\bMFG\b", "MFG"), (r"\bPKD\b", "PKD"),
 ]
 
 EXPIRY_LABELS = [
@@ -1109,7 +1115,13 @@ EXPIRY_LABELS = [
     (r"\bExp\.?\s*Date\b", "Exp. Date"),
     (r"\bExp\b", "Exp"),
 ]
-MFG_DATE_NEGATIVE = [pat for pat, _name in EXPIRY_LABELS] + [r"\bBatch\b", r"\bBatch\s*No\.?\b"]
+# Updated to prevent Proximity Bleed by stopping at batch number patterns
+MFG_DATE_NEGATIVE = [pat for pat, _name in EXPIRY_LABELS] + [
+    r"\bBatch\b",
+    r"\bBatch\s*No\.?\b",
+    r"\bB\.?NO\.?\b",    # Added to catch B.NO / BNO
+    r"\bLOT\b"           # Added to catch LOT numbers
+]
 
 _MONTH_NAMES = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
@@ -1122,7 +1134,8 @@ _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
 _DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
-MFG_DATE_WINDOW = 100
+# Shrink search window to prevent jumping lines/labels in cramped layouts
+MFG_DATE_WINDOW = 35
 
 
 def _normalize_date(kind: str, groups) -> Optional[str]:
@@ -1267,8 +1280,12 @@ CONSUMER_CARE_LABELS = [
     (r"\bCustomer\s*Care\s*Number\b", "Customer Care Number"),
     (r"\bCustomer\s*Care\b", "Customer Care"),
     (r"\bCustomer\s*Support\b", "Customer Support"),
-    (r"\bContact\s*Us\b", "Contact Us"),
-    (r"\bContact\s*Details\b", "Contact Details"),
+    (r"\bContact\s*Us\b", "Contact Us"), (r"\bContact\s*Details\b", "Contact Details"),
+    (r"\bConsumer\s*Relations\b", "Consumer Relations"),
+    (r"\bContact\s*Consumer\s*Relations\b", "Contact Consumer Relations"),
+    (r"\bFeedback\b", "Feedback"), (r"\bComplaints\b", "Complaints"),
+    (r"\bQuestions\s*or\s*Comments\b", "Questions or Comments"),
+    (r"\bToll\s*Free\b", "Toll Free"),
 ]
 
 _PHONE_RE = re.compile(

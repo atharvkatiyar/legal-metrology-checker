@@ -666,6 +666,13 @@ check("Mfg Date: missing label -> no false positive", r.value is None, f"got {r.
 r = resolve_manufacturing_date("")
 check("Mfg Date: empty input -> no crash", r.value is None, f"got {r.value}")
 
+# --- NEW TESTS ADDED HERE ---
+r = resolve_manufacturing_date("MFD: 06/FEB/26")
+check("Mfg Date: bare MFD label resolves (can bottom fix)", r.value == "2026-02-06", f"got {r.value}")
+
+r = resolve_manufacturing_date("MFG 01/06/2026")
+check("Mfg Date: bare MFG label resolves (can bottom fix)", r.value == "2026-06-01", f"got {r.value}")
+# ----------------------------
 
 # ===========================================================================
 # AUG 27 — Consumer Care

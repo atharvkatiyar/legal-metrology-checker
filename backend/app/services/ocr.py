@@ -24,6 +24,13 @@ _TRIGGER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_ROTATIONS: tuple[int | None, ...] = (
+    None,
+    cv2.ROTATE_90_CLOCKWISE,
+    cv2.ROTATE_180,
+    cv2.ROTATE_90_COUNTERCLOCKWISE,
+)
+
 
 def _get_reader() -> easyocr.Reader:
     """
@@ -61,6 +68,79 @@ def _resize_for_ocr(
         (new_width, new_height),
         interpolation=cv2.INTER_AREA,
     )
+
+
+def _rotate(image_array: np.ndarray, rotation_code: int | None) -> np.ndarray:
+    if rotation_code is None:
+        return image_array
+    return cv2.rotate(image_array, rotation_code)
+
+
+def _score_results(results: list[Any]) -> float:
+    """
+    Rewards actual word lengths and statutory keywords to prevent 
+    "barcode shattering" (where sideways barcodes generate 50+ tiny 
+    garbage characters that artificially inflate the score).
+    """
+    if not results:
+        return 0.0
+
+    score = 0.0
+    for r in results:
+        if not isinstance(r, (list, tuple)) or len(r) != 3:
+            continue
+            
+        text = str(r[1]).strip()
+        conf = float(r[2])
+
+        # Penalize 1 or 2 character noise (likely barcode lines or color dots)
+        if len(text) <= 2:
+            score += conf * 0.1
+        else:
+            # Reward longer coherent strings
+            score += conf * len(text)
+
+        # MASSIVE BONUS: If this rotation reveals a compliance keyword, it is the correct rotation.
+        if re.search(r'(?:mrp|₹|rs\.?|net|qty|mfd|exp|batch|date|manufactur)', text, re.IGNORECASE):
+            score += 100.0
+
+    return score
+
+
+def _detect_best_rotation(
+    image_array: np.ndarray,
+    ocr_reader: easyocr.Reader,
+) -> np.ndarray:
+    """
+    Probes all 4 orientations with a single lightweight OCR pass each
+    and returns the image rotated to whichever orientation produced
+    the strongest, most numerous text detections.
+
+    EasyOCR scans left-to-right and does not auto-rotate on its own,
+    so a label photo taken sideways or upside-down otherwise produces
+    near-total gibberish that the downstream regex/field-mapping
+    engine can never recover from.
+    """
+    best_array = image_array
+    best_score = -1.0
+
+    for rotation_code in _ROTATIONS:
+        candidate = _rotate(image_array, rotation_code)
+        try:
+            results = ocr_reader.readtext(candidate, detail=1)
+        except Exception:
+            logger.exception(
+                "Rotation-probe OCR pass failed for rotation_code=%s",
+                rotation_code,
+            )
+            continue
+
+        score = _score_results(results)
+        if score > best_score:
+            best_score = score
+            best_array = candidate
+
+    return best_array
 
 
 def _detect_language(text: str) -> str:
@@ -260,6 +340,12 @@ async def extract_text_from_image(
 
         image_array = _resize_for_ocr(image_array)
         ocr_reader = _get_reader()
+
+        # Rotation pre-pass: EasyOCR reads left-to-right and does not
+        # auto-correct sideways/upside-down photos on its own. Probe
+        # all 4 orientations cheaply and lock in the best one before
+        # running the full (potentially two-pass) pipeline below.
+        image_array = _detect_best_rotation(image_array, ocr_reader)
 
         # Pass 1: standard extraction.
         pass_one_results = ocr_reader.readtext(image_array, detail=1)

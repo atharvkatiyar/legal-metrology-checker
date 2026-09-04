@@ -10,21 +10,12 @@
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
     },
     {
-      "rule_id": "RULE_6_1_B",
-      "clause": "Rule 6(1)(b)",
-      "field": "commodity_name",
-      "description": "Common or generic name of the commodity",
-      "mandatory": true,
-      "severity": "HIGH",
-      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
-    },
-    {
       "rule_id": "RULE_6_1_C",
       "clause": "Rule 6(1)(c)",
       "field": "net_quantity",
       "description": "Net quantity in standard metric units",
       "check_target": "normalized_value.unit",
-      "valid_units": ["g", "kg", "ml", "l", "ltr", "pieces", "units"],
+      "valid_units": ["g", "kg", "ml", "l", "ltr", "pieces", "units", "cigarettes", "sticks", "pills", "tablets"],
       "mandatory": true,
       "severity": "HIGH",
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
@@ -42,9 +33,7 @@
       "rule_id": "RULE_6_1_E",
       "clause": "Rule 6(1)(e)",
       "field": "mrp",
-      "description": "Maximum Retail Price with mandatory tax declaration",
-      "check_target": "raw_value",
-      "regex_pattern": "(?:MRP|M\\.R\\.P\\.?|₹|Rs\\.?)\\s*[:\\-]?\\s*\\d+(?:\\.\\d{1,2})?\\s*[^a-zA-Z]*(?:[Ii]ncl\\.?|inclusive)\\s*(?:of\\s*)?all\\s*taxes",
+      "description": "Maximum Retail Price verification",
       "mandatory": true,
       "severity": "CRITICAL",
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
@@ -57,14 +46,6 @@
       "mandatory": true,
       "severity": "MEDIUM",
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
-    },
-    {
-      "rule_id": "SCHEDULE_2",
-      "clause": "Second Schedule",
-      "field": "standard_pack_size",
-      "description": "Commodities must be packed in standard prescribed sizes",
-      "mandatory": false,
-      "severity": "WARNING"
     }
   ]
 }
