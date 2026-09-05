@@ -1,6 +1,5 @@
 """
 backend/app/services/font_size_adapter.py
-
 Adapter between router.py's font-check endpoint and check_font_size().
 Reuses field_mapping_adapter.build_field_mapping_output() rather than
 re-deriving field-mapping shape -- see its _FIELD_KEY_MAP for the
@@ -12,15 +11,35 @@ Confirmed shapes (from field_mapping.py / field_mapping_adapter.py):
 - ExtractedField.raw_value: plain string, e.g. "Net Qty 500 g".
 - ExtractedField.normalized_value: structured data -- for net_quantity,
   a dict {"amount": float, "unit": str}, e.g. {"amount": 500.0, "unit": "g"}.
-"""
-from typing import Optional
 
+NOTE (perf/cost change): this now accepts an already-computed
+mapping_result_dict instead of raw ocr_tokens, so callers that already
+ran map_fields_with_fallback() at scan-init time (see router.py's
+init_scan) don't pay for a second, redundant Gemini call + full regex
+sweep just to get bboxes for the font-size check. This function is
+synchronous again as a result -- it no longer awaits anything itself.
+
+NOTE (multi-image scoping): mapping_result_dict may be a MERGED result
+across multiple uploaded images (each field picks whichever image gave
+the highest-confidence value, independently per field -- see router.py's
+_merge_mapping_results). Font-size checking, however, only re-loads and
+measures ONE physical image (image_path). If a field's winning value
+came from a different image than the one being measured here, that
+field's bbox refers to pixel coordinates on a DIFFERENT photo and must
+not be drawn against this image. Callers MUST pre-scope
+mapping_result_dict to the image actually being checked before calling
+this function -- see field_mapping_fallback-tagged "_image_index" keys
+and router.py's _scope_mapping_to_primary_image() helper, which is
+responsible for stripping bboxes (not values) that don't belong to the
+primary image before this function ever sees them. This module does not
+re-derive that scoping itself, to avoid duplicating router.py's
+knowledge of which image index is "primary."
+"""
+from typing import Any, Optional
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
-
 from app.services.font_size import check_font_size
-from app.field_mapping import map_fields
 from app.services.field_mapping_adapter import build_field_mapping_output
 
 _ATTR_TO_FIELD_NAME = {
@@ -47,7 +66,7 @@ def _load_image_exif_corrected(path: str):
 
 def try_check_font_size(
     image_path: str,
-    ocr_tokens: list[dict],
+    mapping_result_dict: dict[str, Any],
     tap_point: tuple[int, int],
     coin_key: str = "5_rupee",
     net_quantity_g_or_ml: Optional[float] = None,
@@ -57,7 +76,6 @@ def try_check_font_size(
     except (FileNotFoundError, OSError):
         return None
 
-    mapping_result_dict = map_fields(ocr_tokens)
     mapping_output = build_field_mapping_output(mapping_result_dict)
 
     labeled_tokens = []

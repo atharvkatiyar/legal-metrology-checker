@@ -15,7 +15,7 @@
       "field": "net_quantity",
       "description": "Net quantity in standard metric units",
       "check_target": "normalized_value.unit",
-      "valid_units": ["g", "kg", "ml", "l", "ltr", "pieces", "units", "cigarettes", "sticks", "pills", "tablets"],
+      "valid_units": ["g", "kg", "ml", "l", "ltr", "pieces", "units", "cigarettes", "sticks", "pills", "tablets","pairs"],
       "mandatory": true,
       "severity": "HIGH",
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"

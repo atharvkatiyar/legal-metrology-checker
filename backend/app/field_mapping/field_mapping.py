@@ -307,8 +307,9 @@ NET_QTY_NEGATIVE = [
 UNIT_RE = (
     r"(milligrams?|kilograms?|millilitres?|milliliters?|litres?|liters?|"
     r"grams?|mg|kg|g|ml|mL|ML|l|L|"
-    r"pieces?|pcs?|units?|u|n|numbers?|cigarettes?|sticks?|tablets?|pills?)"
+    r"pieces?|pcs?|units?|u|n|numbers?|cigarettes?|sticks?|tablets?|pills?|pairs?)"
 )
+
 QUANTITY_VALUE_RE = re.compile(
     r"(?<![\d.,])(?P<sign>[+-])?\s*(?P<amount_raw>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>" + UNIT_RE + r")\b",
     re.IGNORECASE,
@@ -323,7 +324,8 @@ UNIT_NORMALIZE = {
     "unit": "units", "units": "units", "u": "units",
     "n": "units", "number": "units", "numbers": "units",
     "cigarette": "cigarettes", "cigarettes": "cigarettes", "stick": "sticks", "sticks": "sticks",
-    "tablet": "tablets", "tablets": "tablets", "pill": "pills", "pills": "pills"
+    "tablet": "tablets", "tablets": "tablets", "pill": "pills", "pills": "pills",
+    "pair": "pairs", "pairs": "pairs"
 }
 
 
