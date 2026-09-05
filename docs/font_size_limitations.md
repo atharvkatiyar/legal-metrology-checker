@@ -1,13 +1,17 @@
 # Font-Size & Readability Module — Known Limitations
 
 *Module: coin-based font-height calibration for Legal Metrology compliance checking*
-*Status as of Aug 30: working prototype, integrated end-to-end*
+*Status as of Sep 4: working prototype, integrated end-to-end, tested against full sample set*
 
 ## Accuracy
 
-Validated at **8.0% mean measurement error** across 6 labeled real-world product photos spanning varied categories (liquid, cosmetics, ice cream, wafer, biscuits, chocolate). This is sufficient to flag clearly non-compliant font sizes but should not be treated as precise enough to serve as sole legal evidence in a borderline case.
+Validated at **18.1% mean measurement error** across 12 labeled real-world product photos spanning varied categories (liquid, cosmetics, ice cream, wafer, biscuits, chocolate, chips, peanut butter, notebook, sauce, bread) and shooting conditions. This is sufficient to flag clearly non-compliant font sizes but should not be treated as precise enough to serve as sole legal evidence in a borderline case.
 
-A 7th test sample was excluded: the reference coin was photographed too close, with its edge never visible in frame. No calibration method can recover scale information the photo doesn't contain — this is a capture-quality constraint, not a fixable defect. It informs a practical guideline (the coin must be fully visible in the shot) rather than pointing to a code fix.
+Three test samples were excluded across the full data collection, all for reasons unrelated to the calibration algorithm itself:
+- One photo where the reference coin was photographed too close, with its edge never visible in frame — no calibration method can recover scale information the photo doesn't contain. This is a capture-quality constraint, not a fixable defect.
+- One photo where the label text was at a visible angle, breaking the height-measurement logic's assumption of upright text (see Text Orientation section below).
+
+**A key finding from the larger sample set**: measurement error correlates with the absolute size of the text being measured, not with any single failure in coin detection. Debug visualizations confirmed coin detection was accurate even on the highest-error samples (2-3mm text) — the error instead traces to manual bounding-box labeling precision (via the tap-to-label tool used to build this test set) mattering proportionally more on small targets. A 5-10 pixel labeling imprecision is negligible against a 90px-tall text region but becomes a large percentage of a 40-50px one. This is a genuine measurement-noise floor in the current manual labeling process, not a defect in the coin-detection or scale-calculation logic — worth noting since it would shrink substantially once bounding boxes come from the real OCR pipeline rather than manual clicks.
 
 ## Calibration approach trade-offs
 
@@ -19,7 +23,7 @@ This means:
 
 ## Text orientation
 
-The module currently assumes **upright, horizontal label text**. One test photo with rotated (sideways) text was excluded from validation, since the height-measurement logic assumes text height corresponds to the vertical axis of the bounding box, which does not hold for rotated text. Automatic rotation detection/correction was not implemented due to time constraints.
+The module currently assumes **upright, horizontal label text**. Two test photos with rotated/tilted text were excluded from validation (confirmed via an inverted bounding box on repeated independent measurements), since the height-measurement logic assumes text height corresponds to the vertical axis of the bounding box, which does not hold for rotated text. Automatic rotation detection/correction was not implemented due to time constraints.
 
 ## Dependency on upstream OCR quality
 

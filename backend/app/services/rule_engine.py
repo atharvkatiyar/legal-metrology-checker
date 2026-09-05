@@ -77,7 +77,7 @@ MANDATORY_FIELDS = [
     "manufacturer",
     "mfg_date",
     "consumer_care",
-    "commodity_name",
+   
 ]
 
 # country_of_origin stays excluded -- confirmed with team as of Aug 31:

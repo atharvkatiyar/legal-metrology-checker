@@ -1,8 +1,15 @@
 """
 backend/app/services/font_size.py — Font-Size & Readability Analyst module.
 
-STATUS (Aug 29): working prototype, coin-based calibration.
-Accuracy: ~10% mean error, n=2 labeled samples.
+STATUS (Sep 4): working prototype, coin-based calibration, tested against
+full sample set (task 11 complete).
+Accuracy: 18.1% mean error, n=12 labeled samples across varied product
+types (liquid/tonic, cosmetics, ice cream, wafer, biscuits, chocolate,
+chips, peanut butter, notebook, sauce, bread). Coin detection confirmed
+accurate via debug visualization even on higher-error samples -- error
+correlates with small (2-3mm) text size and manual bbox-labeling
+precision, not coin detection. Expected to improve once fed real OCR
+bboxes instead of manually-labeled ones.
 Coin detection: Hough Circle Transform (edge-based).
 
 NOTE FOR INTEGRATION LEAD:
@@ -11,12 +18,27 @@ to ocr_tokens/image_dimensions — coin-based calibration needs real pixel
 data to find and measure the reference coin, which token bboxes and
 dimensions alone can't provide. This deviates from the resolve_* functions'
 pure-token signature; the router will need to pass the loaded image through
-to this call, not just OCR output.
+to this call, not just OCR output. (Confirmed Aug 30: image_bgr itself is
+not a blocker — one added cv2.imread() call in router.py. Still open:
+tap_point UI/UX — is coin-tap a capture-time user action, or does this need
+full auto-detection? — and confirming the real OCR token schema.)
 
 TODO before submission:
 - MIN_FONT_HEIGHT_MM is a PLACEHOLDER — get real slabs from Data & Rules Lead.
-- Only 2 labeled samples tested so far.
-- Assumes upright horizontal text; rotated label text not yet handled.
+- 12 labeled samples tested (up from 6 on Aug 30) — mean error 18.1%.
+  Debug visualization confirmed coin detection is accurate even on the
+  higher-error samples; the increase traces to manual bbox-click
+  precision mattering more on small (2-3mm) text targets than on larger
+  ones — a labeling-precision limitation, not a coin-detection bug.
+  Expected to improve once fed real OCR bboxes instead of manually
+  clicked ones.
+- One sample (coin photographed too close, edge out of frame) was
+  dropped rather than "fixed" — no calibration method works without the
+  coin's edge visible in the shot; this is a capture-quality constraint
+  to document, not a bug.
+- Two samples dropped for rotated/tilted label text (bbox y2 < y1
+  confirmed on repeated clicks) — automatic rotation handling not
+  implemented.
 - Assumes a coin is present in the photo (approach tradeoff, not a bug).
 - tap_point is currently a required manual input (from a user tap in the
   capture UI) — there's no automatic coin-location step yet.
