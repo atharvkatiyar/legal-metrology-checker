@@ -49,25 +49,20 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), primary_key=True, default=uuid.uuid4
-    )
-    officer_id: Mapped[str] = mapped_column(
-        String(100), unique=True, index=True, nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False) # e.g. "R. K. Sharma"
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    officer_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False) # Badge/Cadre ID
+    gov_id_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False) # e.g. NIC Employee ID
+    jurisdiction_circle: Mapped[str] = mapped_column(String(150), nullable=False) # e.g. "Circle-IV, Jaipur West"
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(50), nullable=False)
-    region: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Field Inspection Officer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
-    scans: Mapped[List["ScanResult"]] = relationship(
-        "ScanResult", back_populates="officer", lazy="selectin"
-    )
+    scans: Mapped[List["ScanResult"]] = relationship("ScanResult", back_populates="officer", lazy="selectin")
 
-
+    
 class Product(Base):
     __tablename__ = "products"
 

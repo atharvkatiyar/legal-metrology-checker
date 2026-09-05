@@ -1,3 +1,4 @@
+# app/api/v1/router.py
 from __future__ import annotations
 import asyncio
 import io
@@ -12,9 +13,11 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from passlib.context import CryptContext
 
 from app.core.database import get_db
 from app.models.schema import ScanResult, ViolationRecord, User
@@ -38,6 +41,8 @@ UPLOAD_DIR = "uploads"
 _CONFIDENCE_RANK = {"high": 2, "low": 1, "none": 0}
 
 SUPABASE_SYNC_URL = "https://gthsgretafamflrkcdhd.supabase.co/rest/v1/cloud_scan_results"
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def utcnow() -> datetime:
@@ -126,7 +131,7 @@ async def health_check() -> dict:
 
 
 class LoginRequest(BaseModel):
-    officer_id: str
+    login_identifier: str
     password: str
 
 
@@ -136,20 +141,30 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(User).where(User.officer_id == body.officer_id)
+        select(User).where(
+            or_(
+                getattr(User, "email", User.officer_id) == body.login_identifier,
+                User.officer_id == body.login_identifier
+            )
+        )
     )
     user = result.scalar_one_or_none()
 
-    if user is None or user.hashed_password != body.password:
+    if user is None or not pwd_context.verify(body.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid officer ID or password",
+            detail="Invalid Government Credentials. Access Denied.",
         )
 
     return {
-        "user_id": str(user.id),
-        "officer_id": user.officer_id,
-        "role": user.role,
+        "officer": {
+            "id": str(user.id),
+            "name": user.name,
+            "officer_id": user.officer_id,
+            "gov_id": getattr(user, "gov_id_number", "N/A"),
+            "jurisdiction": getattr(user, "jurisdiction_circle", "N/A"),
+            "role": user.role,
+        }
     }
 
 
@@ -157,11 +172,23 @@ async def login(
 async def get_scan_history(
     limit: int = 25,
     offset: int = 0,
+    officer_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    query = select(ScanResult).order_by(ScanResult.created_at.desc()).offset(offset).limit(limit)
+    query = select(ScanResult)
+    
+    # Filter by specific officer if requested
+    if officer_id:
+        try:
+            parsed_uuid = uuid.UUID(officer_id)
+            query = query.where(ScanResult.officer_id == parsed_uuid)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid officer ID format")
+            
+    query = query.order_by(ScanResult.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     scans = result.scalars().all()
+    
     items = []
     for scan in scans:
         items.append({
@@ -172,6 +199,55 @@ async def get_scan_history(
             "product_id": str(scan.product_id) if scan.product_id else "Unregistered Product"
         })
     return {"items": items}
+
+
+@router.get("/scans/metrics")
+async def get_scan_metrics(
+    officer_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    total_query = select(func.count()).select_from(ScanResult)
+    compliant_query = select(func.count()).select_from(ScanResult).where(ScanResult.is_compliant == True) # noqa: E712
+    violation_query = select(
+        ViolationRecord.field_name,
+        func.count(ViolationRecord.field_name).label("violation_count")
+    ).select_from(ViolationRecord)
+
+    # Filter metrics for a specific officer if requested
+    if officer_id:
+        try:
+            parsed_uuid = uuid.UUID(officer_id)
+            total_query = total_query.where(ScanResult.officer_id == parsed_uuid)
+            compliant_query = compliant_query.where(ScanResult.officer_id == parsed_uuid)
+            # Need to join ScanResult to filter violations by officer
+            violation_query = violation_query.join(ScanResult, ViolationRecord.scan_id == ScanResult.id).where(ScanResult.officer_id == parsed_uuid)
+        except ValueError:
+            pass
+
+    total_result = await db.execute(total_query)
+    total = total_result.scalar() or 0
+    
+    if total == 0:
+        return {
+            "total": 0,
+            "pass_rate": 0.0,
+            "top_violation": "None",
+        }
+        
+    compliant_result = await db.execute(compliant_query)
+    compliant_count = compliant_result.scalar() or 0
+    pass_rate = round((compliant_count / total) * 100, 1)
+    
+    violation_query = violation_query.group_by(ViolationRecord.field_name).order_by(func.count(ViolationRecord.field_name).desc()).limit(1)
+    top_violation_result = await db.execute(violation_query)
+    top_violation_row = top_violation_result.first()
+    top_violation = top_violation_row[0] if top_violation_row else "None"
+    
+    return {
+        "total": total,
+        "pass_rate": pass_rate,
+        "top_violation": top_violation,
+    }
 
 
 @router.post(
@@ -424,6 +500,15 @@ async def get_scan_pdf(
             await db.commit()
             await db.refresh(scan)
 
+    officer_name: Optional[str] = None
+    if scan.officer_id is not None:
+        officer_result = await db.execute(
+            select(User).where(User.id == scan.officer_id)
+        )
+        officer_user = officer_result.scalar_one_or_none()
+        if officer_user is not None:
+            officer_name = f"{officer_user.name}, {officer_user.role} ({officer_user.officer_id})"
+
     cr_no = f"CR-{scan.created_at.year}-{str(scan.id)[:8].upper()}"
 
     pdf_bytes = generate_inspection_certificate_pdf(
@@ -431,9 +516,71 @@ async def get_scan_pdf(
         violations=list(scan.violations),
         cr_no=cr_no,
         resolved_address=resolved_address,
+        officer_name=officer_name,
     )
 
     filename = f"lmcs-certificate-{str(scan.id)[:8]}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
+
+
+@router.get("/scans/public/{cert_id}/pdf")
+async def get_public_scan_pdf(
+    cert_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    clean_id = cert_id.upper().replace("CERT-", "").replace("CR-", "").strip()
+    
+    result = await db.execute(
+        select(ScanResult)
+        .options(selectinload(ScanResult.violations))
+        .where(cast(ScanResult.id, String).ilike(f"{clean_id}%"))
+    )
+    scan = result.scalar_one_or_none()
+
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Certificate not found. Please verify the ID.")
+
+    resolved_address = scan.location_address
+    if (
+        resolved_address is None
+        and scan.latitude is not None
+        and scan.longitude is not None
+    ):
+        resolved_address = await asyncio.to_thread(
+            reverse_geocode, scan.latitude, scan.longitude
+        )
+        if resolved_address:
+            scan.location_address = resolved_address
+            await db.commit()
+            await db.refresh(scan)
+
+    officer_name: Optional[str] = None
+    if scan.officer_id is not None:
+        officer_result = await db.execute(
+            select(User).where(User.id == scan.officer_id)
+        )
+        officer_user = officer_result.scalar_one_or_none()
+        if officer_user is not None:
+            officer_name = f"{officer_user.name}, {officer_user.role} ({officer_user.officer_id})"
+
+    cr_no = f"CR-{scan.created_at.year}-{str(scan.id)[:8].upper()}"
+
+    pdf_bytes = generate_inspection_certificate_pdf(
+        scan=scan,
+        violations=list(scan.violations),
+        cr_no=cr_no,
+        resolved_address=resolved_address,
+        officer_name=officer_name,
+    )
+
+    filename = f"lmcs-certificate-{clean_id}.pdf"
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
