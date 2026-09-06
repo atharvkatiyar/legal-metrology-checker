@@ -1307,7 +1307,8 @@ CONSUMER_CARE_LABELS = [
     (r"\bCustomer\s*Care\s*Number\b", "Customer Care Number"),
     (r"\bCustomer\s*Care\b", "Customer Care"),
     (r"\bCustomer\s*Support\b", "Customer Support"),
-    (r"\bContact\s*Us\b", "Contact Us"), (r"\bContact\s*Details\b", "Contact Details"),
+    (r"\bContact[\s._-]+Us\b", "Contact Us"),
+    (r"\bContact[\s._-]+Details\b", "Contact Details"),
     (r"\bConsumer\s*Relations\b", "Consumer Relations"),
     (r"\bContact\s*Consumer\s*Relations\b", "Contact Consumer Relations"),
     (r"\bFeedback\b", "Feedback"), (r"\bComplaints\b", "Complaints"),
@@ -1360,10 +1361,20 @@ def extract_consumer_care_candidates(text: str) -> List[Candidate]:
             if email:
                 reason_codes.append("EMAIL_MATCH")
 
+            # A partial contact record is useful, but it is not complete.
+            # Keep phone-only/email-only values for deterministic extraction,
+            # while lowering confidence so the LLM fallback can enrich the
+            # missing half of the consumer-care field.
+            score = 0.95 if phone and email else 0.6
+            if phone and not email:
+                reasons.append("phone found but email missing -> partial contact, low confidence")
+            elif email and not phone:
+                reasons.append("email found but phone missing -> partial contact, low confidence")
+
             candidates.append(Candidate(
                 field="CONSUMER_CARE", value={"phone": phone, "email": email},
                 raw_evidence=text[lm.start():abs_end],
-                label_matched=label_name, score=0.9,
+                label_matched=label_name, score=score,
                 start=lm.start(), end=abs_end,
                 reasons=reasons, reason_codes=reason_codes,
                 suppressed=False,
