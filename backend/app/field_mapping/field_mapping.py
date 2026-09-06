@@ -708,6 +708,16 @@ def resolve_mrp(text: str) -> FieldResult:
     else:
         confidence = "high" if best.score >= HIGH_CONFIDENCE_THRESHOLD else "low"
 
+    # OCR can concatenate unrelated digits into a single giant MRP token
+    # (for example, a product/batch code being read as the price). Do not
+    # discard or truncate the value; downgrade only clearly implausible
+    # very-large MRPs so the LLM fallback can verify/correct them.
+    #
+    # The high threshold preserves ordinary expensive products while
+    # catching obvious OCR concatenation such as 50437350.
+    if best.value is not None and float(best.value) >= 1_000_000:
+        confidence = "low"
+
     return FieldResult("MRP", best.value, confidence, best.raw_evidence,
                         [c.to_dict() for c in candidates], ambiguous=ambiguous)
 
@@ -1266,7 +1276,22 @@ def resolve_manufacturing_date(text: str, tokens: Optional[List[Dict[str, Any]]]
     text = text or ""
     norm, char_map = _normalize_text_with_map(text)
     candidates = extract_mfg_date_candidates(norm)
-    return _finalize_extended("MANUFACTURING_DATE", candidates, tokens, char_map, len(text))
+    result = _finalize_extended(
+        "MANUFACTURING_DATE", candidates, tokens, char_map, len(text)
+    )
+
+    # A manufacturing date cannot reasonably be in the future. Keep the
+    # OCR-derived value for provenance/debugging, but downgrade confidence
+    # so the LLM fallback can verify or correct an obviously bad date.
+    if result.value:
+        try:
+            parsed = datetime.date.fromisoformat(str(result.value))
+            if parsed > datetime.date.today():
+                result.confidence = "low"
+        except (ValueError, TypeError):
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
