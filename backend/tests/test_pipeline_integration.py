@@ -101,7 +101,7 @@ async def test_full_pipeline_compliant_label():
             base_url="http://test",
         ) as client:
             files = {
-                "image": (
+                "images": (
                     "label.jpg",
                     _fake_image_bytes(),
                     "image/jpeg",
@@ -161,7 +161,7 @@ async def test_full_pipeline_missing_fields_label():
             base_url="http://test",
         ) as client:
             files = {
-                "image": (
+                "images": (
                     "blank.jpg",
                     _fake_image_bytes(),
                     "image/jpeg",
@@ -220,7 +220,7 @@ async def test_full_pipeline_ocr_failure_does_not_crash():
             base_url="http://test",
         ) as client:
             files = {
-                "image": (
+                "images": (
                     "broken.jpg",
                     _fake_image_bytes(),
                     "image/jpeg",
