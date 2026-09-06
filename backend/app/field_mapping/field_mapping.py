@@ -1014,7 +1014,16 @@ def _cross_field_boundaries(text: str) -> List[int]:
     """Boundary set used by the Aug 27 extended fields."""
     all_positive = (MRP_LABELS + NET_QTY_LABELS + MANUFACTURER_LABELS +
                      MFG_DATE_LABELS + EXPIRY_LABELS + CONSUMER_CARE_LABELS)
-    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE
+    # Contact/query phrases are hard boundaries for free-text manufacturer
+    # extraction too. Otherwise text such as "for customer queries" can be
+    # swallowed into the preceding manufacturer address.
+    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE + [
+        r"\bfor\s+customer\s+queries\b",
+        r"\bfor\s+consumer\s+queries\b",
+        r"\bfor\s+queries\b",
+        r"\bcustomer\s+queries\b",
+        r"\bconsumer\s+queries\b",
+    ]
     return _boundaries(text, all_positive, all_negative)
 
 
@@ -1080,8 +1089,13 @@ def extract_manufacturer_candidates(text: str) -> List[Candidate]:
                 continue  # no letters at all -> not a plausible company/address
 
             # deterministic two-tier confidence: a very short fragment is
-            # kept but treated as low-confidence rather than discarded
+            # kept but treated as low-confidence rather than discarded.
             score = 0.95 if len(value_text) >= 8 else 0.6
+
+            # When several company-related labels are present, prefer the
+            # label that most directly identifies the manufacturer. This
+            # avoids letting a "Marketed by"/"Packed by" block beat a true
+            # "Manufactured by" block merely because it appeared first.
 
             candidates.append(Candidate(
                 field="MANUFACTURER_ADDRESS", value=value_text,
