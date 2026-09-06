@@ -12,7 +12,7 @@ import json
 import sys
 
 from app.services.ocr import extract_text_from_image
-from app.field_mapping import map_fields
+from app.services.field_mapping_fallback import map_fields_with_fallback
 from app.services.font_size_adapter import try_check_font_size
 
 
@@ -23,15 +23,15 @@ async def main(image_path: str):
     for t in ocr_tokens:
         print(f"  {t}")
 
-    mapping_result = map_fields(ocr_tokens)
-    print("\nmap_fields() output for MRP and NET_QUANTITY:")
+    mapping_result = await map_fields_with_fallback(ocr_tokens, image_path=image_path)
+    print("\nmap_fields_with_fallback() output for MRP and NET_QUANTITY:")
     print(json.dumps(mapping_result.get("MRP"), indent=2, default=str))
     print(json.dumps(mapping_result.get("NET_QUANTITY"), indent=2, default=str))
 
     print("\nNow trying try_check_font_size() against this real data...")
     result = try_check_font_size(
         image_path=image_path,
-        ocr_tokens=ocr_tokens,
+        mapping_result_dict=mapping_result,
         tap_point=(1266, 342),
         coin_key="5_rupee",
     )

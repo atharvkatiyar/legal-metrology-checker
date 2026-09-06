@@ -58,6 +58,19 @@ _UNIT_TO_GRAMS_OR_ML = {
     "kg": 1000.0, "l": 1000.0, "litre": 1000.0, "litres": 1000.0,
 }
 
+# Count-based units (e.g. "3 units", "6 pieces") have no direct
+# weight/volume equivalent under the current MIN_FONT_HEIGHT_MM slabs,
+# which are defined by net weight/volume per Legal Metrology (Packaged
+# Commodities) Rules, 2011. Rather than fabricate a bogus gram-equivalent,
+# these are tracked separately so callers/output can flag "not yet
+# supported" instead of silently returning required_mm=None with no
+# explanation.
+_COUNT_BASED_UNITS = {
+    "unit", "units", "piece", "pieces", "pcs", "pair", "pairs",
+    "tablet", "tablets", "pill", "pills", "cigarette", "cigarettes",
+    "stick", "sticks",
+}
+
 
 def _load_image_exif_corrected(path: str):
     pil_img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
@@ -90,17 +103,23 @@ def try_check_font_size(
             "field": field_name,
         })
 
+    net_quantity_unit_supported = True
     if net_quantity_g_or_ml is None:
         nq = mapping_output.fields.get("net_quantity")
         if nq is not None and isinstance(nq.normalized_value, dict):
             amount = nq.normalized_value.get("amount")
             unit = (nq.normalized_value.get("unit") or "").lower()
-            multiplier = _UNIT_TO_GRAMS_OR_ML.get(unit)
-            if amount is not None and multiplier is not None:
-                net_quantity_g_or_ml = float(amount) * multiplier
+            if unit in _COUNT_BASED_UNITS:
+                net_quantity_unit_supported = False
+            else:
+                multiplier = _UNIT_TO_GRAMS_OR_ML.get(unit)
+                if amount is not None and multiplier is not None:
+                    net_quantity_g_or_ml = float(amount) * multiplier
+                elif unit:
+                    net_quantity_unit_supported = False
 
     try:
-        return check_font_size(
+        result = check_font_size(
             ocr_tokens=labeled_tokens,
             image_dimensions=(image_bgr.shape[1], image_bgr.shape[0]),
             image_bgr=image_bgr,
@@ -110,3 +129,11 @@ def try_check_font_size(
         )
     except ValueError:
         return None
+
+    if result is not None and not net_quantity_unit_supported:
+        result["net_quantity_unit_supported"] = False
+        result["note"] = (
+            "Net quantity unit is count-based or unrecognized; "
+            "font-size minimum could not be determined for this product."
+        )
+    return result
