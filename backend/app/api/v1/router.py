@@ -8,21 +8,26 @@ import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from passlib.context import CryptContext
+
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.schema import ScanResult, ViolationRecord, User
 from app.services.geocoding import reverse_geocode
 from app.services.pdf_generator import generate_inspection_certificate_pdf
+
 from PIL import Image, ImageOps
 import pillow_heif
 pillow_heif.register_heif_opener()
+
 from app.services.ocr import extract_text_from_image
 from app.services.field_mapping_fallback import map_fields_with_fallback
 from app.services.field_mapping_adapter import build_field_mapping_output, _FIELD_KEY_MAP
@@ -33,7 +38,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 UPLOAD_DIR = "uploads"
 _CONFIDENCE_RANK = {"high": 2, "low": 1, "none": 0}
-SUPABASE_SYNC_URL = "https://gthsgretafamflrkcdhd.supabase.co/rest/v1/cloud_scan_results"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -41,29 +45,50 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ---------------------------------------------------------------------------
+# Blocking I/O helpers
+# ---------------------------------------------------------------------------
+
+def _write_bytes_sync(path: str, contents: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(contents)
+
+
+def _process_image_sync(image_path: str) -> str:
+    img = Image.open(image_path)
+    img = ImageOps.exif_transpose(img)
+
+    if image_path.lower().endswith((".heic", ".heif")):
+        new_image_path = os.path.splitext(image_path)[0] + ".jpg"
+        img.convert("RGB").save(new_image_path, "JPEG")
+        os.remove(image_path)
+        return new_image_path
+
+    img.save(image_path)
+    return image_path
+
+
 async def _save_and_normalize_upload(upload: UploadFile) -> str:
     file_extension = os.path.splitext(upload.filename or "")[1] or ".jpg"
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     image_path = os.path.join(UPLOAD_DIR, unique_filename)
-    contents = await upload.read()
-    with open(image_path, "wb") as f:
-        f.write(contents)
-    await upload.close()
-    try:
-        img = Image.open(image_path)
-        img = ImageOps.exif_transpose(img)
 
-        if image_path.lower().endswith((".heic", ".heif")):
-            new_image_path = os.path.splitext(image_path)[0] + ".jpg"
-            img.convert("RGB").save(new_image_path, "JPEG")
-            os.remove(image_path)
-            image_path = new_image_path
-        else:
-            img.save(image_path)
+    contents = await upload.read()
+    await upload.close()
+
+    await asyncio.to_thread(_write_bytes_sync, image_path, contents)
+
+    try:
+        image_path = await asyncio.to_thread(_process_image_sync, image_path)
     except Exception as e:
-        logger.warning(f"EXIF rotation failed for {image_path}: {e}")
+        logger.warning(f"EXIF rotation/normalization failed for {image_path}: {e}")
+
     return image_path
 
+
+# ---------------------------------------------------------------------------
+# Field merge helpers
+# ---------------------------------------------------------------------------
 
 def _merge_field_result(
     existing: Optional[dict[str, Any]],
@@ -111,30 +136,22 @@ def _merge_mapping_results(
     return merged
 
 
+def _strip_internal_keys(mapping_result: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for field_name, field_result in mapping_result.items():
+        if isinstance(field_result, dict):
+            cleaned[field_name] = {
+                k: v for k, v in field_result.items() if not k.startswith("_")
+            }
+        else:
+            cleaned[field_name] = field_result
+    return cleaned
+
+
 def _scope_mapping_to_primary_image(
     merged_mapping_result: dict[str, Any],
     primary_image_index: int,
 ) -> dict[str, Any]:
-    """
-    merged_mapping_result (scan_result.extracted_fields) is merged across
-    ALL uploaded images -- each field independently picks whichever image
-    gave the highest-confidence value, tagged via the "_image_index" key
-    that init_scan() attaches to every per-field dict before merging.
-
-    Font-size checking only re-loads and measures ONE physical image
-    (the primary one). A field whose winning value came from a
-    *different* image carries a bbox in that other image's pixel
-    coordinate space -- drawing/measuring it against the primary image
-    would silently produce a meaningless font-height result.
-
-    This returns a shallow copy of the mapping with "bbox" stripped
-    (set to None) on any field whose recorded source image isn't
-    primary_image_index. The field's VALUE is left intact (still useful
-    for e.g. net_quantity unit conversion), only its spatial evidence is
-    dropped. Fields with no "_image_index" tag at all (e.g. results that
-    predate this tagging, or came from a single-image scan where merging
-    is a no-op) are left untouched.
-    """
     scoped: dict[str, Any] = {}
     for field_name, field_result in merged_mapping_result.items():
         if not isinstance(field_result, dict):
@@ -150,12 +167,61 @@ def _scope_mapping_to_primary_image(
     return scoped
 
 
+async def _process_single_image(idx: int, path: str) -> dict[str, Any]:
+    try:
+        ocr_tokens = await extract_text_from_image(path)
+    except Exception:
+        logger.exception("OCR failed for image %s", path)
+        ocr_tokens = []
+    if not isinstance(ocr_tokens, list):
+        ocr_tokens = []
+
+    text = " ".join(
+        t.get("text", "") for t in ocr_tokens if isinstance(t, dict)
+    )
+
+    try:
+        image_mapping_result = await map_fields_with_fallback(
+            ocr_tokens,
+            image_path=path,
+        )
+    except Exception:
+        logger.exception("Field mapping failed for image %s", path)
+        image_mapping_result = {}
+    if not isinstance(image_mapping_result, dict):
+        image_mapping_result = {}
+
+    for field_result in image_mapping_result.values():
+        if isinstance(field_result, dict):
+            field_result["_image_index"] = idx
+
+    return {
+        "idx": idx,
+        "path": path,
+        "ocr_tokens": ocr_tokens,
+        "text": text,
+        "mapping_result": image_mapping_result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+
 @router.get("/health")
 async def health_check() -> dict:
     return {
         "status": "healthy",
         "timestamp": utcnow().isoformat(),
     }
+
+
+@router.get("/uploads/{filename}")
+async def get_uploaded_image(filename: str):
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path)
 
 
 class LoginRequest(BaseModel):
@@ -199,7 +265,7 @@ async def get_scan_history(
     limit: int = 25,
     offset: int = 0,
     officer_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     query = select(ScanResult)
 
@@ -221,7 +287,7 @@ async def get_scan_history(
             "created_at": scan.created_at.isoformat(),
             "is_compliant": scan.is_compliant,
             "compliance_score": scan.compliance_score,
-            "product_id": str(scan.product_id) if scan.product_id else "Unregistered Product"
+            "product_id": str(scan.product_id) if scan.product_id else "Unregistered Product",
         })
     return {"items": items}
 
@@ -235,7 +301,7 @@ async def get_scan_metrics(
     compliant_query = select(func.count()).select_from(ScanResult).where(ScanResult.is_compliant == True)  # noqa: E712
     violation_query = select(
         ViolationRecord.field_name,
-        func.count(ViolationRecord.field_name).label("violation_count")
+        func.count(ViolationRecord.field_name).label("violation_count"),
     ).select_from(ViolationRecord)
 
     if officer_id:
@@ -243,7 +309,9 @@ async def get_scan_metrics(
             parsed_uuid = uuid.UUID(officer_id)
             total_query = total_query.where(ScanResult.officer_id == parsed_uuid)
             compliant_query = compliant_query.where(ScanResult.officer_id == parsed_uuid)
-            violation_query = violation_query.join(ScanResult, ViolationRecord.scan_id == ScanResult.id).where(ScanResult.officer_id == parsed_uuid)
+            violation_query = violation_query.join(
+                ScanResult, ViolationRecord.scan_id == ScanResult.id
+            ).where(ScanResult.officer_id == parsed_uuid)
         except ValueError:
             pass
 
@@ -261,7 +329,9 @@ async def get_scan_metrics(
     compliant_count = compliant_result.scalar() or 0
     pass_rate = round((compliant_count / total) * 100, 1)
 
-    violation_query = violation_query.group_by(ViolationRecord.field_name).order_by(func.count(ViolationRecord.field_name).desc()).limit(1)
+    violation_query = violation_query.group_by(ViolationRecord.field_name).order_by(
+        func.count(ViolationRecord.field_name).desc()
+    ).limit(1)
     top_violation_result = await db.execute(violation_query)
     top_violation_row = top_violation_result.first()
     top_violation = top_violation_row[0] if top_violation_row else "None"
@@ -285,6 +355,7 @@ async def init_scan(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     os.makedirs(UPLOAD_DIR, exist_ok=True)
+
     parsed_officer_id: Optional[uuid.UUID] = None
     if officer_id:
         try:
@@ -294,6 +365,7 @@ async def init_scan(
                 status_code=400,
                 detail="officer_id must be a valid UUID",
             )
+
     image_paths: list[str] = []
     for upload in images:
         try:
@@ -312,44 +384,16 @@ async def init_scan(
             detail="No valid images were uploaded.",
         )
 
-    per_image_ocr: list[list[dict[str, Any]]] = []
-    per_image_texts: list[str] = []
-    per_image_raw_results: list[dict[str, Any]] = []
+    per_image_task_results = await asyncio.gather(
+        *(_process_single_image(idx, path) for idx, path in enumerate(image_paths))
+    )
+    per_image_task_results.sort(key=lambda r: r["idx"])
 
-    for idx, path in enumerate(image_paths):
-        try:
-            ocr_tokens = await extract_text_from_image(path)
-        except Exception:
-            logger.exception("OCR failed for image %s", path)
-            ocr_tokens = []
-        if not ocr_tokens:
-            ocr_tokens = []
-        per_image_ocr.append(ocr_tokens)
-        per_image_texts.append(
-            " ".join(
-                t.get("text", "")
-                for t in ocr_tokens
-                if isinstance(t, dict)
-            )
-        )
-        try:
-            image_mapping_result = await map_fields_with_fallback(
-                ocr_tokens,
-                image_path=path,
-            )
-        except Exception:
-            logger.exception("Field mapping failed for image %s", path)
-            image_mapping_result = {}
-        if not isinstance(image_mapping_result, dict):
-            image_mapping_result = {}
-        for field_result in image_mapping_result.values():
-            if isinstance(field_result, dict):
-                field_result["_image_index"] = idx
-        per_image_raw_results.append(image_mapping_result)
+    per_image_ocr: list[list[dict[str, Any]]] = [r["ocr_tokens"] for r in per_image_task_results]
+    per_image_texts: list[str] = [r["text"] for r in per_image_task_results]
+    per_image_raw_results: list[dict[str, Any]] = [r["mapping_result"] for r in per_image_task_results]
 
     merged_raw_results = _merge_mapping_results(per_image_raw_results)
-    mapping_output = build_field_mapping_output(merged_raw_results)
-    compliance_result = check_compliance(mapping_output)
 
     field_to_image_index: dict[str, Optional[int]] = {}
     for source_key, target_key in _FIELD_KEY_MAP.items():
@@ -360,6 +404,9 @@ async def init_scan(
             else None
         )
 
+    mapping_output = build_field_mapping_output(merged_raw_results)
+    compliance_result = check_compliance(mapping_output)
+    persisted_fields = _strip_internal_keys(merged_raw_results)
     combined_raw_text = "\n\n".join(per_image_texts)
 
     scan_result = ScanResult(
@@ -378,7 +425,7 @@ async def init_scan(
                 for p, tokens in zip(image_paths, per_image_ocr)
             ],
         },
-        extracted_fields=merged_raw_results,
+        extracted_fields=persisted_fields,
         latitude=latitude,
         longitude=longitude,
         created_at=utcnow(),
@@ -412,7 +459,7 @@ async def init_scan(
         "image_paths": image_paths,
         "is_compliant": compliance_result.is_compliant,
         "score": compliance_result.score,
-        "extracted_fields": merged_raw_results,
+        "extracted_fields": persisted_fields,
         "violations": [
             {
                 "field_name": violation.field_name,
@@ -457,16 +504,8 @@ async def get_scan(
         image_paths = [scan_result.image_path]
     return {
         "id": str(scan_result.id),
-        "product_id": (
-            str(scan_result.product_id)
-            if scan_result.product_id
-            else None
-        ),
-        "officer_id": (
-            str(scan_result.officer_id)
-            if scan_result.officer_id
-            else None
-        ),
+        "product_id": str(scan_result.product_id) if scan_result.product_id else None,
+        "officer_id": str(scan_result.officer_id) if scan_result.officer_id else None,
         "sync_status": scan_result.sync_status,
         "image_paths": image_paths,
         "status": scan_result.status,
@@ -481,8 +520,8 @@ async def get_scan(
                 "field_name": v.field_name,
                 "issue": v.issue,
                 "severity": v.severity,
-                "violation_category": v.violation_category,
-                "measured_value": v.measured_value,
+                "violation_category": getattr(v, "violation_category", None),
+                "measured_value": getattr(v, "measured_value", None),
                 "bbox": v.bbox,
                 "legal_reference": v.legal_reference,
                 "created_at": v.created_at.isoformat(),
@@ -492,19 +531,90 @@ async def get_scan(
     }
 
 
-@router.get("/scans/{scan_id}/pdf")
-async def get_scan_pdf(
+# ---------------------------------------------------------------------------
+# Manual Override Endpoint (Matrix Submission)
+# ---------------------------------------------------------------------------
+
+class RuleOverride(BaseModel):
+    rule_key: str
+    status: str
+    evidence: str
+
+class OverrideRequest(BaseModel):
+    score: int
+    is_compliant: bool
+    overrides: list[RuleOverride]
+
+@router.post("/scans/{scan_id}/override")
+async def override_scan(
     scan_id: uuid.UUID,
+    body: OverrideRequest,
     db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+) -> dict:
     result = await db.execute(
         select(ScanResult)
         .options(selectinload(ScanResult.violations))
         .where(ScanResult.id == scan_id)
     )
     scan = result.scalar_one_or_none()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    scan.compliance_score = body.score
+    scan.is_compliant = body.is_compliant
+
+    current_violations = {v.field_name: v for v in scan.violations}
+    
+    extracted = scan.extracted_fields or {}
+    if not isinstance(extracted, dict):
+        extracted = {}
+
+    for over in body.overrides:
+        if over.status == "PASS":
+            if over.rule_key in current_violations:
+                await db.delete(current_violations[over.rule_key])
+        elif over.status == "FAIL":
+            if over.rule_key not in current_violations:
+                new_v = ViolationRecord(
+                    scan_id=scan.id,
+                    field_name=over.rule_key,
+                    issue=over.evidence,
+                    severity="HIGH",
+                    legal_reference="Rule 6",
+                )
+                db.add(new_v)
+            else:
+                current_violations[over.rule_key].issue = over.evidence
+
+        if over.rule_key not in extracted:
+            extracted[over.rule_key] = {}
+        if isinstance(extracted[over.rule_key], dict):
+            extracted[over.rule_key]["confidence"] = "high" if over.status == "PASS" else "none"
+            extracted[over.rule_key]["value"] = over.evidence if over.status == "PASS" else None
+            extracted[over.rule_key]["_manual_override"] = over.status
+
+    # Re-assign to force SQLAlchemy JSON column update
+    scan.extracted_fields = extracted
+    
+    await db.commit()
+    return {"message": "Success"}
+
+
+async def _load_scan_for_pdf(scan_id_filter, db: AsyncSession) -> ScanResult:
+    result = await db.execute(
+        select(ScanResult)
+        .options(selectinload(ScanResult.violations))
+        .where(scan_id_filter)
+    )
+    scan = result.scalar_one_or_none()
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
+    return scan
+
+
+async def _resolve_address_and_officer(
+    scan: ScanResult, db: AsyncSession
+) -> tuple[Optional[str], Optional[str]]:
     resolved_address = scan.location_address
     if (
         resolved_address is None
@@ -518,6 +628,7 @@ async def get_scan_pdf(
             scan.location_address = resolved_address
             await db.commit()
             await db.refresh(scan)
+
     officer_name: Optional[str] = None
     if scan.officer_id is not None:
         officer_result = await db.execute(
@@ -526,6 +637,18 @@ async def get_scan_pdf(
         officer_user = officer_result.scalar_one_or_none()
         if officer_user is not None:
             officer_name = f"{officer_user.name}, {officer_user.role} ({officer_user.officer_id})"
+
+    return resolved_address, officer_name
+
+
+@router.get("/scans/{scan_id}/pdf")
+async def get_scan_pdf(
+    scan_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    scan = await _load_scan_for_pdf(ScanResult.id == scan_id, db)
+    resolved_address, officer_name = await _resolve_address_and_officer(scan, db)
+
     cr_no = f"CR-{scan.created_at.year}-{str(scan.id)[:8].upper()}"
     pdf_bytes = generate_inspection_certificate_pdf(
         scan=scan,
@@ -538,9 +661,7 @@ async def get_scan_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -551,35 +672,11 @@ async def get_public_scan_pdf(
 ) -> StreamingResponse:
     clean_id = cert_id.upper().replace("CERT-", "").replace("CR-", "").strip()
 
-    result = await db.execute(
-        select(ScanResult)
-        .options(selectinload(ScanResult.violations))
-        .where(cast(ScanResult.id, String).ilike(f"{clean_id}%"))
+    scan = await _load_scan_for_pdf(
+        cast(ScanResult.id, String).ilike(f"{clean_id}%"), db
     )
-    scan = result.scalar_one_or_none()
-    if scan is None:
-        raise HTTPException(status_code=404, detail="Certificate not found. Please verify the ID.")
-    resolved_address = scan.location_address
-    if (
-        resolved_address is None
-        and scan.latitude is not None
-        and scan.longitude is not None
-    ):
-        resolved_address = await asyncio.to_thread(
-            reverse_geocode, scan.latitude, scan.longitude
-        )
-        if resolved_address:
-            scan.location_address = resolved_address
-            await db.commit()
-            await db.refresh(scan)
-    officer_name: Optional[str] = None
-    if scan.officer_id is not None:
-        officer_result = await db.execute(
-            select(User).where(User.id == scan.officer_id)
-        )
-        officer_user = officer_result.scalar_one_or_none()
-        if officer_user is not None:
-            officer_name = f"{officer_user.name}, {officer_user.role} ({officer_user.officer_id})"
+    resolved_address, officer_name = await _resolve_address_and_officer(scan, db)
+
     cr_no = f"CR-{scan.created_at.year}-{str(scan.id)[:8].upper()}"
     pdf_bytes = generate_inspection_certificate_pdf(
         scan=scan,
@@ -592,9 +689,7 @@ async def get_public_scan_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -611,12 +706,11 @@ async def font_check(
     body: FontCheckRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(
-        select(ScanResult).where(ScanResult.id == scan_id)
-    )
+    result = await db.execute(select(ScanResult).where(ScanResult.id == scan_id))
     scan_result = result.scalar_one_or_none()
     if scan_result is None:
         raise HTTPException(status_code=404, detail="Scan not found")
+
     try:
         stored_paths = json.loads(scan_result.image_path)
         if isinstance(stored_paths, list) and stored_paths:
@@ -626,19 +720,6 @@ async def font_check(
     except (TypeError, ValueError):
         primary_image_path = scan_result.image_path
 
-    # NOTE (perf/cost fix): previously re-derived OCR tokens from
-    # scan_result.raw_ocr and re-ran the ENTIRE map_fields_with_fallback
-    # pipeline (including a second, redundant Gemini call up to 60s) just
-    # to get bboxes for the font-size check. init_scan() already computed
-    # and stored the merged mapping result in scan_result.extracted_fields
-    # -- reuse it directly instead of recomputing it.
-    #
-    # That merged result can mix fields from different uploaded images
-    # (each field independently picks its highest-confidence source
-    # image). Font-size checking only measures the PRIMARY image's
-    # pixels, so any field whose winning value came from a different
-    # image has its bbox stripped here to avoid drawing/measuring against
-    # the wrong photo's coordinate space.
     extracted_fields = scan_result.extracted_fields or {}
     if not isinstance(extracted_fields, dict):
         extracted_fields = {}
@@ -653,6 +734,7 @@ async def font_check(
         coin_key=body.coin_key,
         net_quantity_g_or_ml=body.net_quantity_g_or_ml,
     )
+
     if font_result is not None and font_result.get("is_compliant") is False:
         new_violation = ViolationRecord(
             scan_id=scan_id,
@@ -667,11 +749,10 @@ async def font_check(
             legal_reference="Rule 9",
         )
         scan_result.is_compliant = False
-        scan_result.compliance_score = max(
-            0, (scan_result.compliance_score or 100) - 20
-        )
+        scan_result.compliance_score = max(0, (scan_result.compliance_score or 100) - 20)
         db.add(new_violation)
         await db.commit()
+
     if font_result is None:
         return {
             "scan_id": str(scan_id),
@@ -683,6 +764,7 @@ async def font_check(
                 "not affect the scan's main compliance result."
             ),
         }
+
     return {
         "scan_id": str(scan_id),
         "available": True,
@@ -700,6 +782,7 @@ async def sync_scans(
     pending_scans = result.scalars().all()
     if not pending_scans:
         return {"message": "No pending scans to sync.", "synced_count": 0}
+
     payload = [
         {
             "id": str(scan.id),
@@ -710,23 +793,44 @@ async def sync_scans(
         }
         for scan in pending_scans
     ]
+
+    sync_url = f"{settings.SUPABASE_URL}/rest/v1/{settings.SUPABASE_SYNC_TABLE}"
+    headers = {
+        "apikey": settings.SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    if not settings.SUPABASE_SERVICE_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="SUPABASE_SERVICE_KEY is not configured; cannot sync to cloud backend.",
+        )
+
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(SUPABASE_SYNC_URL, json=payload)
+            response = await client.post(sync_url, json=payload, headers=headers, timeout=30.0)
     except httpx.HTTPError:
         logger.exception("Network error while syncing scans to cloud backend")
         raise HTTPException(
             status_code=502,
             detail="Failed to sync scans to cloud backend.",
         )
+
     if response.status_code not in (200, 201):
+        logger.error(
+            "Supabase sync failed: status=%s body=%s", response.status_code, response.text
+        )
         raise HTTPException(
             status_code=502,
             detail="Failed to sync scans to cloud backend.",
         )
+
     for scan in pending_scans:
         scan.sync_status = "synced"
     await db.commit()
+
     return {
         "message": "Sync completed successfully.",
         "synced_count": len(pending_scans),
