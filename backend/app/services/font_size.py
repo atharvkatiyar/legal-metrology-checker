@@ -55,12 +55,15 @@ COIN_DIAMETERS_MM = {
     "10_rupee": 27.00,
 }
 
-# PLACEHOLDER — replace with real Legal Metrology (Packaged Commodities)
-# Rules, 2011 font-height slabs from Data & Rules Lead before submission.
+# Legal Metrology (Packaged Commodities) Rules, 2011 -- font-height
+# slabs for numerals declaring net quantity by weight/volume, NORMAL CASE
+# packaging only. A separate, taller set of minimums applies to blown,
+# formed, or molded containers (1mm/2mm/4mm -> 2mm/4mm/6mm) which this
+# module does not yet distinguish -- out of scope for this submission.
 MIN_FONT_HEIGHT_MM = [
     (0, 200, 1.0),
-    (200, 1000, 2.0),
-    (1000, float("inf"), 4.0),
+    (200, 500, 2.0),
+    (500, float("inf"), 4.0),
 ]
 
 
