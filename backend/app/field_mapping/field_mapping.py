@@ -1133,7 +1133,7 @@ _MONTH_NAMES = {
 _DATE_DMY4_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})\b")
 _DATE_YMD_RE = re.compile(r"\b(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\b")
 _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
-_DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
+_DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})[\s./-]+([A-Za-z]{3,9})[,\s./-]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
 # Shrink search window to prevent jumping lines/labels in cramped layouts
