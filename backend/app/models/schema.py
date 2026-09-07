@@ -108,6 +108,8 @@ class ScanResult(Base):
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     location_address: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    calibrator_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    calibrator_result: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -180,4 +182,25 @@ class ViolationRecord(Base):
 
     scan_result: Mapped["ScanResult"] = relationship(
         "ScanResult", back_populates="violations", lazy="selectin"
+    )
+class FontCheckRecord(Base):
+    __tablename__ = "font_check_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), primary_key=True, default=uuid.uuid4
+    )
+    officer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    image_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    coin_key: Mapped[str] = mapped_column(String(50), nullable=False, default="5_rupee")
+    tap_x: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tap_y: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    net_quantity_g_or_ml: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    measured_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    required_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    is_compliant: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    raw_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
     )

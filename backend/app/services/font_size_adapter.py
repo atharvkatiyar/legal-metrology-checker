@@ -4,36 +4,6 @@ Adapter between router.py's font-check endpoint and check_font_size().
 Reuses field_mapping_adapter.build_field_mapping_output() rather than
 re-deriving field-mapping shape -- see its _FIELD_KEY_MAP for the
 uppercase-name -> snake_case-key mapping this relies on.
-
-Confirmed shapes (from field_mapping.py / field_mapping_adapter.py):
-- mapping_output.fields is keyed by snake_case names (e.g. "net_quantity"),
-  NOT direct attributes on mapping_output itself.
-- ExtractedField.raw_value: plain string, e.g. "Net Qty 500 g".
-- ExtractedField.normalized_value: structured data -- for net_quantity,
-  a dict {"amount": float, "unit": str}, e.g. {"amount": 500.0, "unit": "g"}.
-
-NOTE (perf/cost change): this now accepts an already-computed
-mapping_result_dict instead of raw ocr_tokens, so callers that already
-ran map_fields_with_fallback() at scan-init time (see router.py's
-init_scan) don't pay for a second, redundant Gemini call + full regex
-sweep just to get bboxes for the font-size check. This function is
-synchronous again as a result -- it no longer awaits anything itself.
-
-NOTE (multi-image scoping): mapping_result_dict may be a MERGED result
-across multiple uploaded images (each field picks whichever image gave
-the highest-confidence value, independently per field -- see router.py's
-_merge_mapping_results). Font-size checking, however, only re-loads and
-measures ONE physical image (image_path). If a field's winning value
-came from a different image than the one being measured here, that
-field's bbox refers to pixel coordinates on a DIFFERENT photo and must
-not be drawn against this image. Callers MUST pre-scope
-mapping_result_dict to the image actually being checked before calling
-this function -- see field_mapping_fallback-tagged "_image_index" keys
-and router.py's _scope_mapping_to_primary_image() helper, which is
-responsible for stripping bboxes (not values) that don't belong to the
-primary image before this function ever sees them. This module does not
-re-derive that scoping itself, to avoid duplicating router.py's
-knowledge of which image index is "primary."
 """
 from typing import Any, Optional
 import cv2
@@ -55,20 +25,17 @@ _ATTR_TO_FIELD_NAME = {
 _UNIT_TO_GRAMS_OR_ML = {
     "g": 1.0, "gm": 1.0, "gram": 1.0, "grams": 1.0,
     "ml": 1.0, "millilitre": 1.0, "millilitres": 1.0,
-    "kg": 1000.0, "l": 1000.0, "litre": 1000.0, "litres": 1000.0,
+    "kg": 1000.0, "l": 1000.0, "ltr": 1000.0, "litre": 1000.0, "litres": 1000.0,
 }
 
-# Count-based units (e.g. "3 units", "6 pieces") have no direct
-# weight/volume equivalent under the current MIN_FONT_HEIGHT_MM slabs,
-# which are defined by net weight/volume per Legal Metrology (Packaged
-# Commodities) Rules, 2011. Rather than fabricate a bogus gram-equivalent,
-# these are tracked separately so callers/output can flag "not yet
-# supported" instead of silently returning required_mm=None with no
-# explanation.
+# Count-based units have no direct weight/volume equivalent under the current 
+# MIN_FONT_HEIGHT_MM slabs. These are tracked separately so callers/output 
+# can flag "not yet supported" instead of silently returning required_mm=None.
 _COUNT_BASED_UNITS = {
     "unit", "units", "piece", "pieces", "pcs", "pair", "pairs",
     "tablet", "tablets", "pill", "pills", "cigarette", "cigarettes",
-    "stick", "sticks",
+    "stick", "sticks", "capsule", "capsules", "sachet", "sachets", 
+    "packet", "packets", "bottle", "bottles", "can", "cans", "box", "boxes"
 }
 
 
@@ -80,7 +47,7 @@ def _load_image_exif_corrected(path: str):
 def try_check_font_size(
     image_path: str,
     mapping_result_dict: dict[str, Any],
-    tap_point: tuple[int, int],
+    tap_point: Optional[tuple[int, int]] = None,
     coin_key: str = "5_rupee",
     net_quantity_g_or_ml: Optional[float] = None,
 ) -> Optional[dict]:

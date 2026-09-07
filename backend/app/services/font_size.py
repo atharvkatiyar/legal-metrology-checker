@@ -78,17 +78,45 @@ def _detect_coin_scale(image_bgr, tap_point, coin_key="5_rupee", search_radius_p
     """Returns mm_per_px using Hough Circle detection around tap_point."""
     x, y = tap_point
     h, w = image_bgr.shape[:2]
+
+    # Reject a tap outside the image bounds outright rather than letting
+    # a degenerate/negative crop slice reach cv2 and throw an unhandled
+    # cv2.error (as opposed to the ValueError this function is expected
+    # to raise on failure).
+    if not (0 <= x < w and 0 <= y < h):
+        raise ValueError(
+            f"Tap point ({x}, {y}) is outside image bounds ({w}x{h})."
+        )
+
     x0, x1 = max(0, x - search_radius_px), min(w, x + search_radius_px)
     y0, y1 = max(0, y - search_radius_px), min(h, y + search_radius_px)
     crop = image_bgr[y0:y1, x0:x1]
 
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    gray = cv2.medianBlur(gray, 5)
+    # A tap right at an edge/corner can still produce a zero-width or
+    # zero-height crop even after the bounds check above (e.g. x0 == x1
+    # when the tap sits exactly on the boundary). cv2.cvtColor on an
+    # empty array raises cv2.error, not ValueError -- normalize it here
+    # so callers only ever need to catch ValueError.
+    if crop.size == 0 or crop.shape[0] == 0 or crop.shape[1] == 0:
+        raise ValueError(
+            "Tap point is too close to the image edge to search for a coin — "
+            "try tapping closer to the center of the coin."
+        )
 
-    circles = cv2.HoughCircles(
-        gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=search_radius_px,
-        param1=100, param2=40, minRadius=search_radius_px // 6, maxRadius=search_radius_px,
-    )
+    try:
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.medianBlur(gray, 5)
+
+        circles = cv2.HoughCircles(
+            gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=search_radius_px,
+            param1=100, param2=40, minRadius=search_radius_px // 6, maxRadius=search_radius_px,
+        )
+    except cv2.error as exc:
+        # Any other OpenCV-level failure (malformed image data, unsupported
+        # dtype, etc.) degrades to the same "no coin found" contract rather
+        # than crashing the request.
+        raise ValueError(f"Coin detection failed: {exc}") from exc
+
     if circles is None:
         raise ValueError("No coin circle found — check tap_point or search_radius_px.")
 
@@ -96,7 +124,12 @@ def _detect_coin_scale(image_bgr, tap_point, coin_key="5_rupee", search_radius_p
     best = min(circles[0], key=lambda c: (c[0] - seed[0]) ** 2 + (c[1] - seed[1]) ** 2)
     _, _, r_px = best
 
-    return COIN_DIAMETERS_MM[coin_key] / (2 * r_px)
+    # cv2.HoughCircles returns a numpy float32 array; r_px is numpy.float32,
+    # not a plain Python float. Cast explicitly here (the earliest point
+    # numpy enters this pipeline) so every downstream consumer -- including
+    # FastAPI/Pydantic's JSON serializer, which has no encoder for
+    # numpy.float32 -- only ever sees native Python floats.
+    return float(COIN_DIAMETERS_MM[coin_key] / (2 * float(r_px)))
 
 
 def check_font_size(
@@ -148,23 +181,22 @@ def check_font_size(
         if not field or not bbox:
             continue
         x1, y1, x2, y2 = bbox
-        height_mm = (y2 - y1) * mm_per_px
+        height_mm = float((y2 - y1) * mm_per_px)
         entry = {
             "field": field,
-            "bbox": list(bbox),
+            # bbox coordinates may arrive as numpy types depending on the
+            # caller (font_size_adapter passes plain floats from BBox, but
+            # this function's contract doesn't guarantee that) -- cast each
+            # coordinate to a native float so JSON serialization never
+            # trips on a numpy scalar hiding in the bbox list either.
+            "bbox": [float(v) for v in bbox],
             "measured_mm": round(height_mm, 3),
             "required_mm": min_required,
         }
-        checked_fields.append(entry)
-        if min_required is not None and height_mm < min_required:
-            violations.append({
-                **entry,
-                "violation": "FONT_SIZE_BELOW_MINIMUM",
-            })
 
     return {
         "field": "FONT_SIZE",
-        "value": {"mm_per_px": mm_per_px, "checked_fields": checked_fields},
+        "value": {"mm_per_px": float(mm_per_px), "checked_fields": checked_fields},
         "confidence": "low" if min_required is None else "high",
         "bbox": None,
         "violations": violations,

@@ -1,0 +1,14 @@
+[
+  {"image": "IMG_3478.jpeg", "tap_point": [1266, 342], "coin_key": "5_rupee", "ocr_bbox": [1282, 1896, 1675, 1989], "ground_truth_mm": 3.0},
+  {"image": "IMG_3477.jpeg", "tap_point": [469, 1585], "coin_key": "5_rupee", "ocr_bbox": [2340, 1705, 2602, 1754], "ground_truth_mm": 2.0},
+  {"image": "IMG_3488.jpeg", "tap_point": [1435, 2071], "coin_key": "5_rupee", "ocr_bbox": [955, 3189, 1020, 3238], "ground_truth_mm": 1.0},
+  {"image": "IMG_3489.jpeg", "tap_point": [802, 2311], "coin_key": "5_rupee", "ocr_bbox": [1724, 2742, 2035, 2894], "ground_truth_mm": 4.0},
+  {"image": "IMG_3490.jpeg", "tap_point": [1958, 1852], "coin_key": "5_rupee", "ocr_bbox": [420, 2267, 573, 2376], "ground_truth_mm": 4.0},
+  {"image": "IMG_3491.jpeg", "tap_point": [900, 2267], "coin_key": "5_rupee", "ocr_bbox": [911, 892, 1135, 1002], "ground_truth_mm": 3.0},
+  {"image": "IMG_3492.jpeg", "tap_point": [306, 2376], "coin_key": "5_rupee", "ocr_bbox": [1287, 2518, 1500, 2589], "ground_truth_mm": 3.0},
+  {"image": "IMG_3556.jpeg", "tap_point": [2149, 1956], "coin_key": "5_rupee", "ocr_bbox": [1276, 2256, 1527, 2311], "ground_truth_mm": 3.0},
+  {"image": "IMG_3557.jpeg", "tap_point": [1696, 2283], "coin_key": "5_rupee", "ocr_bbox": [1576, 1334, 1718, 1394], "ground_truth_mm": 2.0},
+  {"image": "IMG_3558.jpeg", "tap_point": [2444, 2300], "coin_key": "5_rupee", "ocr_bbox": [1244, 2491, 1391, 2518], "ground_truth_mm": 1.0},
+  {"image": "IMG_3559.jpeg", "tap_point": [922, 2551], "coin_key": "5_rupee", "ocr_bbox": [1396, 2665, 1609, 2720], "ground_truth_mm": 3.0},
+  {"image": "IMG_3561.jpeg", "tap_point": [513, 2360], "coin_key": "5_rupee", "ocr_bbox": [1615, 2207, 1904, 2289], "ground_truth_mm": 2.0}
+]
