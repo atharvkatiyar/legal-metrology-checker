@@ -205,7 +205,7 @@ def _to_ocr_tokens(results: list[Any]) -> list[dict[str, Any]]:
             continue
         tokens.append(
             {
-                "text": text,
+                "text": _correct_digit_confusions(text),
                 "bbox": bbox_list,
                 "confidence": confidence_value,
                 "language": "en",
@@ -299,6 +299,40 @@ def _iou(bbox_a: list[list[float]], bbox_b: list[list[float]]) -> float:
     return inter_area / union_area
 
 
+_DIGIT_CONFUSION_MAP = str.maketrans({
+    'O': '0', 'o': '0',
+    'I': '1', 'i': '1', 'l': '1', 'L': '1',
+    'S': '5', 's': '5',
+    'B': '8',
+    'Z': '2', 'z': '2',
+})
+
+
+_UNIT_AND_MONTH_GUARD = re.compile(
+    r'\b(ml|mg|kg|gm|g|l|capsules|tablets|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b',
+    re.IGNORECASE,
+)
+
+
+def _looks_numeric(text: str) -> bool:
+    
+    if _UNIT_AND_MONTH_GUARD.search(text):
+        return False
+
+    stripped = re.sub(r'[₹.,/\-:\s]', '', text)
+    if not stripped:
+        return False
+    digit_count = sum(1 for c in stripped if c.isdigit())
+    return digit_count / len(stripped) >= 0.5
+
+
+def _correct_digit_confusions(text: str) -> str:
+    """Fixes common OCR letter/digit confusions, but only on number-dominant text."""
+    if _looks_numeric(text):
+        return text.translate(_DIGIT_CONFUSION_MAP)
+    return text
+
+
 def _merge_and_deduplicate(
     primary_tokens: list[dict[str, Any]],
     secondary_tokens: list[dict[str, Any]],
@@ -383,7 +417,17 @@ async def extract_text_from_image(
         )
         pass_two_tokens = _to_ocr_tokens(pass_two_results)
 
-        return _merge_and_deduplicate(pass_one_tokens, pass_two_tokens)
+        
+        pass_three_results = ocr_reader.readtext(
+            image_array,
+            detail=1,
+            allowlist='0123456789₹.,/-:',
+        )
+        pass_three_tokens = _to_ocr_tokens(pass_three_results)
+
+        merged = _merge_and_deduplicate(pass_one_tokens, pass_two_tokens)
+        merged = _merge_and_deduplicate(merged, pass_three_tokens)
+        return merged
 
     except Exception as e:
         logger.exception(
