@@ -708,6 +708,16 @@ def resolve_mrp(text: str) -> FieldResult:
     else:
         confidence = "high" if best.score >= HIGH_CONFIDENCE_THRESHOLD else "low"
 
+    # OCR can concatenate unrelated digits into a single giant MRP token
+    # (for example, a product/batch code being read as the price). Do not
+    # discard or truncate the value; downgrade only clearly implausible
+    # very-large MRPs so the LLM fallback can verify/correct them.
+    #
+    # The high threshold preserves ordinary expensive products while
+    # catching obvious OCR concatenation such as 50437350.
+    if best.value is not None and float(best.value) >= 1_000_000:
+        confidence = "low"
+
     return FieldResult("MRP", best.value, confidence, best.raw_evidence,
                         [c.to_dict() for c in candidates], ambiguous=ambiguous)
 
@@ -1004,7 +1014,16 @@ def _cross_field_boundaries(text: str) -> List[int]:
     """Boundary set used by the Aug 27 extended fields."""
     all_positive = (MRP_LABELS + NET_QTY_LABELS + MANUFACTURER_LABELS +
                      MFG_DATE_LABELS + EXPIRY_LABELS + CONSUMER_CARE_LABELS)
-    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE
+    # Contact/query phrases are hard boundaries for free-text manufacturer
+    # extraction too. Otherwise text such as "for customer queries" can be
+    # swallowed into the preceding manufacturer address.
+    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE + [
+        r"\bfor\s+customer\s+queries\b",
+        r"\bfor\s+consumer\s+queries\b",
+        r"\bfor\s+queries\b",
+        r"\bcustomer\s+queries\b",
+        r"\bconsumer\s+queries\b",
+    ]
     return _boundaries(text, all_positive, all_negative)
 
 
@@ -1070,8 +1089,13 @@ def extract_manufacturer_candidates(text: str) -> List[Candidate]:
                 continue  # no letters at all -> not a plausible company/address
 
             # deterministic two-tier confidence: a very short fragment is
-            # kept but treated as low-confidence rather than discarded
+            # kept but treated as low-confidence rather than discarded.
             score = 0.95 if len(value_text) >= 8 else 0.6
+
+            # When several company-related labels are present, prefer the
+            # label that most directly identifies the manufacturer. This
+            # avoids letting a "Marketed by"/"Packed by" block beat a true
+            # "Manufactured by" block merely because it appeared first.
 
             candidates.append(Candidate(
                 field="MANUFACTURER_ADDRESS", value=value_text,
@@ -1136,6 +1160,12 @@ _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
 _DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})[\s./-]+([A-Za-z]{3,9})[,\s./-]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
+# Common packaged-goods format: manufacturing month/year followed by
+# expiry month/year, e.g. "09/25-10/27". The first date is manufacturing.
+_DATE_MFG_EXP_RANGE_RE = re.compile(
+    r"\b(\d{1,2})[./\-](\d{2,4})\s*[\-–—]\s*(\d{1,2})[./\-](\d{2,4})\b"
+)
+
 # Shrink search window to prevent jumping lines/labels in cramped layouts
 MFG_DATE_WINDOW = 35
 
@@ -1163,6 +1193,16 @@ def _normalize_date(kind: str, groups) -> Optional[str]:
             y = int(groups[2])
             if y < 100:
                 y += 2000
+        elif kind == "mfg_exp_range":
+            mo = int(groups[0])
+            y = int(groups[1])
+            if y < 100:
+                y += 2000
+            if not 1 <= mo <= 12:
+                return None
+            if not 2000 <= y <= 2099:
+                return None
+            return f"{y:04d}-{mo:02d}"
         elif kind == "my4":
             mo = int(groups[0])
             y = int(groups[1])
@@ -1184,26 +1224,52 @@ def _normalize_date(kind: str, groups) -> Optional[str]:
 
 
 def _find_date_candidates_in_window(window_text: str):
-    """Returns list of (start, end, kind, groups) sorted by start position,
-    de-duplicating so a 4-digit-year match's first-two-digits never also
-    gets picked up as a spurious separate 2-digit-year match."""
+    """Returns list of (start, end, kind, groups) sorted by start position.
+
+    MFG-EXP ranges are treated as atomic candidates so the first
+    month/year is not stolen by a nested standalone-date match.
+    """
     found = []
+    protected_ranges = []
+
+    # First detect complete manufacturing-expiry ranges.
+    for m in _DATE_MFG_EXP_RANGE_RE.finditer(window_text):
+        found.append((m.start(), m.end(), "mfg_exp_range", m.groups()))
+        protected_ranges.append((m.start(), m.end()))
+
+    def inside_protected(start_pos: int, end_pos: int) -> bool:
+        return any(
+            ps <= start_pos and end_pos <= pe
+            for ps, pe in protected_ranges
+        )
+
     for m in _DATE_DMY4_RE.finditer(window_text):
-        found.append((m.start(), m.end(), "dmy4", m.groups()))
+        if not inside_protected(m.start(), m.end()):
+            found.append((m.start(), m.end(), "dmy4", m.groups()))
+
     for m in _DATE_YMD_RE.finditer(window_text):
-        found.append((m.start(), m.end(), "ymd", m.groups()))
+        if not inside_protected(m.start(), m.end()):
+            found.append((m.start(), m.end(), "ymd", m.groups()))
+
     for m in _DATE_DMON_Y_RE.finditer(window_text):
         mon_key = m.group(2)[:3].lower()
-        if mon_key in _MONTH_NAMES:
+        if mon_key in _MONTH_NAMES and not inside_protected(m.start(), m.end()):
             found.append((m.start(), m.end(), "dmonY", m.groups()))
+
     for m in _DATE_DMY2_RE.finditer(window_text):
+        if inside_protected(m.start(), m.end()):
+            continue
         if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
             continue
         found.append((m.start(), m.end(), "dmy2", m.groups()))
+
     for m in _DATE_MY_RE.finditer(window_text):
+        if inside_protected(m.start(), m.end()):
+            continue
         if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
             continue
         found.append((m.start(), m.end(), "my4", m.groups()))
+
     found.sort(key=lambda f: f[0])
     return found
 
@@ -1266,7 +1332,22 @@ def resolve_manufacturing_date(text: str, tokens: Optional[List[Dict[str, Any]]]
     text = text or ""
     norm, char_map = _normalize_text_with_map(text)
     candidates = extract_mfg_date_candidates(norm)
-    return _finalize_extended("MANUFACTURING_DATE", candidates, tokens, char_map, len(text))
+    result = _finalize_extended(
+        "MANUFACTURING_DATE", candidates, tokens, char_map, len(text)
+    )
+
+    # A manufacturing date cannot reasonably be in the future. Keep the
+    # OCR-derived value for provenance/debugging, but downgrade confidence
+    # so the LLM fallback can verify or correct an obviously bad date.
+    if result.value:
+        try:
+            parsed = datetime.date.fromisoformat(str(result.value))
+            if parsed > datetime.date.today():
+                result.confidence = "low"
+        except (ValueError, TypeError):
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1282,7 +1363,8 @@ CONSUMER_CARE_LABELS = [
     (r"\bCustomer\s*Care\s*Number\b", "Customer Care Number"),
     (r"\bCustomer\s*Care\b", "Customer Care"),
     (r"\bCustomer\s*Support\b", "Customer Support"),
-    (r"\bContact\s*Us\b", "Contact Us"), (r"\bContact\s*Details\b", "Contact Details"),
+    (r"\bContact[\s._-]+Us\b", "Contact Us"),
+    (r"\bContact[\s._-]+Details\b", "Contact Details"),
     (r"\bConsumer\s*Relations\b", "Consumer Relations"),
     (r"\bContact\s*Consumer\s*Relations\b", "Contact Consumer Relations"),
     (r"\bFeedback\b", "Feedback"), (r"\bComplaints\b", "Complaints"),
@@ -1295,7 +1377,14 @@ _PHONE_RE = re.compile(
     r"|\b\d{3,5}[-\s]\d{6,8}\b"            # 022-12345678 (STD code + number)
     r"|\b\d{2,5}(?:[-\s]\d{2,5}){1,3}\b"   # 1800-123-4567 (toll-free, multi-hyphen)
 )
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_EMAIL_RE = re.compile(
+    r"\b[\w.+-]+\s*@\s*[\w-]+(?:\s*\.\s*[\w.-]+)+\b"
+)
+
+def _normalize_email(email: Optional[str]) -> Optional[str]:
+    if not email:
+        return None
+    return re.sub(r"\s+", "", email)
 
 CONSUMER_CARE_WINDOW = 180
 
@@ -1317,7 +1406,7 @@ def extract_consumer_care_candidates(text: str) -> List[Candidate]:
             phone_m = _PHONE_RE.search(window_text)
             email_m = _EMAIL_RE.search(window_text)
             phone = phone_m.group(0) if phone_m else None
-            email = email_m.group(0) if email_m else None
+            email = _normalize_email(email_m.group(0)) if email_m else None
 
             if phone is None and email is None:
                 continue  # no meaningful contact info found -> skip, not a candidate
@@ -1335,10 +1424,20 @@ def extract_consumer_care_candidates(text: str) -> List[Candidate]:
             if email:
                 reason_codes.append("EMAIL_MATCH")
 
+            # A partial contact record is useful, but it is not complete.
+            # Keep phone-only/email-only values for deterministic extraction,
+            # while lowering confidence so the LLM fallback can enrich the
+            # missing half of the consumer-care field.
+            score = 0.95 if phone and email else 0.6
+            if phone and not email:
+                reasons.append("phone found but email missing -> partial contact, low confidence")
+            elif email and not phone:
+                reasons.append("email found but phone missing -> partial contact, low confidence")
+
             candidates.append(Candidate(
                 field="CONSUMER_CARE", value={"phone": phone, "email": email},
                 raw_evidence=text[lm.start():abs_end],
-                label_matched=label_name, score=0.9,
+                label_matched=label_name, score=score,
                 start=lm.start(), end=abs_end,
                 reasons=reasons, reason_codes=reason_codes,
                 suppressed=False,

@@ -328,10 +328,7 @@ def _merge_and_deduplicate(
         if overlap_index is None:
             merged.append(candidate)
         else:
-            existing_confidence = merged[overlap_index].get("confidence") or 0.0
-            candidate_confidence = candidate.get("confidence") or 0.0
-            if candidate_confidence > existing_confidence:
-                merged[overlap_index] = candidate
+            merged.append(candidate)
 
     return merged
 
@@ -370,15 +367,20 @@ async def extract_text_from_image(
         image_array = _detect_best_rotation(image_array, ocr_reader)
 
         # Pass 1: standard extraction.
+    
         pass_one_results = ocr_reader.readtext(image_array, detail=1)
         pass_one_tokens = _to_ocr_tokens(pass_one_results)
 
-        if not _should_trigger_second_pass(pass_one_tokens):
-            return pass_one_tokens
-
+        
         # Pass 2: dot-matrix/stamped-text recovery pass.
         preprocessed_array = _preprocess_dot_matrix(image_array)
-        pass_two_results = ocr_reader.readtext(preprocessed_array, detail=1)
+        pass_two_results = ocr_reader.readtext(
+            preprocessed_array,
+            detail=1,
+            text_threshold=0.5,   # default 0.7 — more willing to flag faint regions as text
+            low_text=0.3,         # default 0.4 — looser boundary refinement for weak/stamped strokes
+            link_threshold=0.3,   # default 0.4 — more willing to link nearby stamped characters into one word
+        )
         pass_two_tokens = _to_ocr_tokens(pass_two_results)
 
         return _merge_and_deduplicate(pass_one_tokens, pass_two_tokens)
