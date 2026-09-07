@@ -46,6 +46,29 @@
       "mandatory": true,
       "severity": "MEDIUM",
       "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
+    },
+    {
+      "rule_id": "RULE_9_1",
+      "clause": "Rule 9(1)",
+      "field": "font_size",
+      "description": "Minimum letter height for mandatory declarations calibrated via standard 23mm reference (₹5 coin)",
+      "calibration_slabs": [
+        {
+          "max_capacity": "200g_or_200ml",
+          "min_height_mm": 1.0
+        },
+        {
+          "max_capacity": "500g_or_500ml",
+          "min_height_mm": 2.0
+        },
+        {
+          "max_capacity": "above_500g_or_500ml",
+          "min_height_mm": 4.0
+        }
+      ],
+      "mandatory": true,
+      "severity": "HIGH",
+      "penalty_ref": "Section 36(1) of Legal Metrology Act, 2009"
     }
   ]
 }

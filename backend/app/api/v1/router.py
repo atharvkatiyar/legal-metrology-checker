@@ -20,7 +20,14 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.schema import ScanResult, ViolationRecord, User
+from app.models.schema import ScanResult, ViolationRecord, User, FontCheckRecord
+from app.schemas.contracts import (
+    FontCheckInitResponse,
+    FontCheckCalibrateRequest,
+    FontCheckCalibrateResponse,
+    FontCheckHistoryResponse,
+    FontCheckHistoryItem,
+)
 from app.services.geocoding import reverse_geocode
 from app.services.pdf_generator import generate_inspection_certificate_pdf
 
@@ -33,6 +40,7 @@ from app.services.field_mapping_fallback import map_fields_with_fallback
 from app.services.field_mapping_adapter import build_field_mapping_output, _FIELD_KEY_MAP
 from app.services.rule_engine import check_compliance
 from app.services.font_size_adapter import try_check_font_size
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,11 +145,16 @@ def _merge_mapping_results(
 
 
 def _strip_internal_keys(mapping_result: dict[str, Any]) -> dict[str, Any]:
+    # "_image_index" is deliberately kept: font_check() needs it after
+    # reload from the DB to know which physical photo each field's bbox
+    # is relative to (see its bbox_counts auto-select logic). Every other
+    # leading-underscore key is still stripped as before.
     cleaned: dict[str, Any] = {}
     for field_name, field_result in mapping_result.items():
         if isinstance(field_result, dict):
             cleaned[field_name] = {
-                k: v for k, v in field_result.items() if not k.startswith("_")
+                k: v for k, v in field_result.items()
+                if not k.startswith("_") or k == "_image_index"
             }
         else:
             cleaned[field_name] = field_result
@@ -395,6 +408,9 @@ async def init_scan(
 
     merged_raw_results = _merge_mapping_results(per_image_raw_results)
 
+
+    # -------------------------------------------
+
     field_to_image_index: dict[str, Optional[int]] = {}
     for source_key, target_key in _FIELD_KEY_MAP.items():
         source_result = merged_raw_results.get(source_key)
@@ -580,7 +596,7 @@ async def override_scan(
                     field_name=over.rule_key,
                     issue=over.evidence,
                     severity="HIGH",
-                    legal_reference="Rule 6",
+                    legal_reference="Rule 6/9",
                 )
                 db.add(new_v)
             else:
@@ -698,6 +714,7 @@ class FontCheckRequest(BaseModel):
     tap_y: int
     coin_key: str = "5_rupee"
     net_quantity_g_or_ml: Optional[float] = None
+    image_index: Optional[int] = None
 
 
 @router.post("/scans/{scan_id}/font-check")
@@ -713,45 +730,61 @@ async def font_check(
 
     try:
         stored_paths = json.loads(scan_result.image_path)
-        if isinstance(stored_paths, list) and stored_paths:
-            primary_image_path = stored_paths[0]
-        else:
-            primary_image_path = scan_result.image_path
+        if not isinstance(stored_paths, list) or not stored_paths:
+            stored_paths = [scan_result.image_path]
     except (TypeError, ValueError):
-        primary_image_path = scan_result.image_path
+        stored_paths = [scan_result.image_path]
 
     extracted_fields = scan_result.extracted_fields or {}
     if not isinstance(extracted_fields, dict):
         extracted_fields = {}
+
+    # Use body.image_index if the officer explicitly picked an angle;
+    # otherwise auto-select whichever image actually has the most fields
+    # with a non-null bbox, rather than blindly trusting stored_paths[0].
+    # A field's bbox only survives _scope_mapping_to_primary_image() for
+    # the image it was actually extracted from -- so counting non-null
+    # bboxes per candidate index tells us which physical photo is worth
+    # measuring against.
+    if body.image_index is not None and 0 <= body.image_index < len(stored_paths):
+        primary_index = body.image_index
+    else:
+        bbox_counts: dict[int, int] = {i: 0 for i in range(len(stored_paths))}
+        for field_result in extracted_fields.values():
+            if not isinstance(field_result, dict):
+                continue
+            src_idx = field_result.get("_image_index")
+            if field_result.get("bbox") is not None and src_idx in bbox_counts:
+                bbox_counts[src_idx] += 1
+        primary_index = max(bbox_counts, key=bbox_counts.get) if bbox_counts else 0
+
+    primary_image_path = stored_paths[primary_index]
     scoped_mapping_result = _scope_mapping_to_primary_image(
-        extracted_fields, primary_image_index=0
+        extracted_fields, primary_image_index=primary_index
     )
 
-    font_result = try_check_font_size(
-        image_path=primary_image_path,
-        mapping_result_dict=scoped_mapping_result,
-        tap_point=(body.tap_x, body.tap_y),
-        coin_key=body.coin_key,
-        net_quantity_g_or_ml=body.net_quantity_g_or_ml,
-    )
-
-    if font_result is not None and font_result.get("is_compliant") is False:
-        new_violation = ViolationRecord(
-            scan_id=scan_id,
-            violation_category="FONT_SIZE",
-            field_name="net_quantity",
-            issue=(
-                f"Text height is {font_result['measured_height_mm']}mm, "
-                f"which is below the required minimum."
-            ),
-            severity="HIGH",
-            measured_value=f"{font_result['measured_height_mm']}mm",
-            legal_reference="Rule 9",
+    try:
+        font_result = try_check_font_size(
+            image_path=primary_image_path,
+            mapping_result_dict=scoped_mapping_result,
+            tap_point=(body.tap_x, body.tap_y),
+            coin_key=body.coin_key,
+            net_quantity_g_or_ml=body.net_quantity_g_or_ml,
         )
-        scan_result.is_compliant = False
-        scan_result.compliance_score = max(0, (scan_result.compliance_score or 100) - 20)
-        db.add(new_violation)
-        await db.commit()
+    except Exception:
+        logger.exception(
+            "Font-size check raised an unexpected exception for scan_id=%s",
+            scan_id,
+        )
+        return {
+            "scan_id": str(scan_id),
+            "available": False,
+            "message": (
+                "Font-size check could not be completed due to an internal "
+                "error. This does not affect the scan's main compliance "
+                "result -- try tapping closer to the center of the coin."
+            ),
+        }
 
     if font_result is None:
         return {
@@ -765,12 +798,35 @@ async def font_check(
             ),
         }
 
+    violations_found = font_result.get("violations") or []
+    checked_fields = (font_result.get("value") or {}).get("checked_fields") or []
+    is_compliant = len(checked_fields) > 0 and len(violations_found) == 0
+
+    if not is_compliant and violations_found:
+        for v in violations_found:
+            new_violation = ViolationRecord(
+                scan_id=scan_id,
+                violation_category="FONT_SIZE",
+                field_name=str(v.get("field", "net_quantity")).lower(),
+                issue=(
+                    f"Text height is {v.get('measured_mm')}mm, "
+                    f"below the required minimum of {v.get('required_mm')}mm."
+                ),
+                severity="HIGH",
+                measured_value=f"{v.get('measured_mm')}mm",
+                legal_reference="Rule 9",
+            )
+            scan_result.is_compliant = False
+            scan_result.compliance_score = max(0, (scan_result.compliance_score or 100) - 20)
+            db.add(new_violation)
+        await db.commit()
+
     return {
         "scan_id": str(scan_id),
         "available": True,
+        "primary_image_index": primary_index,
         "result": font_result,
     }
-
 
 @router.post("/scans/sync")
 async def sync_scans(
@@ -835,3 +891,179 @@ async def sync_scans(
         "message": "Sync completed successfully.",
         "synced_count": len(pending_scans),
     }
+@router.post(
+    "/font-checks/init",
+    status_code=status.HTTP_201_CREATED,
+    response_model=FontCheckInitResponse,
+)
+async def init_font_check(
+    image: UploadFile = File(...),
+    officer_id: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+) -> FontCheckInitResponse:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    parsed_officer_id: Optional[uuid.UUID] = None
+    if officer_id:
+        try:
+            parsed_officer_id = uuid.UUID(officer_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="officer_id must be a valid UUID")
+
+    try:
+        image_path = await _save_and_normalize_upload(image)
+    except Exception:
+        logger.exception("Failed to save/normalize font-check upload %s", image.filename)
+        raise HTTPException(status_code=400, detail="Could not process uploaded image.")
+
+    try:
+        with Image.open(image_path) as im:
+            width, height = im.size
+    except Exception:
+        logger.exception("Failed to read dimensions for %s", image_path)
+        raise HTTPException(status_code=400, detail="Uploaded file is not a readable image.")
+
+    record = FontCheckRecord(
+        id=uuid.uuid4(),
+        officer_id=parsed_officer_id,
+        image_path=image_path,
+        coin_key="5_rupee",
+        tap_x=None,
+        tap_y=None,
+        net_quantity_g_or_ml=None,
+        measured_mm=None,
+        required_mm=None,
+        is_compliant=None,
+        raw_result=None,
+        created_at=utcnow(),
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+
+    return FontCheckInitResponse(
+        record_id=str(record.id),
+        image_url=f"/api/v1/uploads/{os.path.basename(image_path)}",
+        image_width=width,
+        image_height=height,
+    )
+@router.post(
+    "/font-checks/{record_id}/calibrate",
+    response_model=FontCheckCalibrateResponse,
+)
+async def calibrate_font_check(
+    record_id: uuid.UUID,
+    body: FontCheckCalibrateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> FontCheckCalibrateResponse:
+    result = await db.execute(
+        select(FontCheckRecord).where(FontCheckRecord.id == record_id)
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Font check record not found")
+
+    try:
+        ocr_tokens = await extract_text_from_image(record.image_path)
+    except Exception:
+        logger.exception("OCR failed during font-check calibration for %s", record.image_path)
+        ocr_tokens = []
+    if not isinstance(ocr_tokens, list):
+        ocr_tokens = []
+
+    try:
+        mapping_result = await map_fields_with_fallback(ocr_tokens, image_path=record.image_path)
+    except Exception:
+        logger.exception("Field mapping failed during font-check calibration for %s", record.image_path)
+        mapping_result = {}
+    if not isinstance(mapping_result, dict):
+        mapping_result = {}
+
+    font_result = try_check_font_size(
+        image_path=record.image_path,
+        mapping_result_dict=mapping_result,
+        tap_point=(body.tap_x, body.tap_y),
+        coin_key=body.coin_key,
+        net_quantity_g_or_ml=body.net_quantity_g_or_ml,
+    )
+
+    record.coin_key = body.coin_key
+    record.tap_x = body.tap_x
+    record.tap_y = body.tap_y
+    record.net_quantity_g_or_ml = body.net_quantity_g_or_ml
+
+    if font_result is None:
+        record.raw_result = None
+        record.is_compliant = None
+        await db.commit()
+        return FontCheckCalibrateResponse(
+            record_id=str(record.id),
+            available=False,
+            message=(
+                "Font-size check could not be completed -- "
+                "no coin detected near the given tap point, "
+                "or the image could not be re-read."
+            ),
+        )
+
+    violations = font_result.get("violations") or []
+    checked_fields = (font_result.get("value") or {}).get("checked_fields") or []
+
+    if violations:
+        summary_entry = violations[0]
+    elif checked_fields:
+        summary_entry = checked_fields[0]
+    else:
+        summary_entry = {}
+
+    record.measured_mm = summary_entry.get("measured_mm")
+    record.required_mm = summary_entry.get("required_mm")
+    record.is_compliant = len(violations) == 0
+    record.raw_result = font_result
+
+    await db.commit()
+
+    return FontCheckCalibrateResponse(
+        record_id=str(record.id),
+        available=True,
+        result=font_result,
+    )
+@router.get("/font-checks/history", response_model=FontCheckHistoryResponse)
+async def get_font_check_history(
+    limit: int = 25,
+    offset: int = 0,
+    officer_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+) -> FontCheckHistoryResponse:
+    query = select(FontCheckRecord).where(FontCheckRecord.raw_result.is_not(None))
+
+    if officer_id:
+        try:
+            parsed_uuid = uuid.UUID(officer_id)
+            query = query.where(FontCheckRecord.officer_id == parsed_uuid)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid officer ID format")
+
+    query = query.order_by(FontCheckRecord.created_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    records = result.scalars().all()
+
+    count_query = select(func.count()).select_from(FontCheckRecord).where(
+        FontCheckRecord.raw_result.is_not(None)
+    )
+    total = (await db.execute(count_query)).scalar() or 0
+
+    items = [
+        FontCheckHistoryItem(
+            record_id=str(r.id),
+            created_at=r.created_at.isoformat(),
+            is_compliant=r.is_compliant,
+            measured_mm=r.measured_mm,
+            required_mm=r.required_mm,
+            coin_key=r.coin_key,
+            image_url=f"/api/v1/uploads/{os.path.basename(r.image_path)}",
+        )
+        for r in records
+    ]
+
+    return FontCheckHistoryResponse(total=total, items=items)
