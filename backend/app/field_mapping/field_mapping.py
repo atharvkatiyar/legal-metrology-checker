@@ -708,6 +708,16 @@ def resolve_mrp(text: str) -> FieldResult:
     else:
         confidence = "high" if best.score >= HIGH_CONFIDENCE_THRESHOLD else "low"
 
+    # OCR can concatenate unrelated digits into a single giant MRP token
+    # (for example, a product/batch code being read as the price). Do not
+    # discard or truncate the value; downgrade only clearly implausible
+    # very-large MRPs so the LLM fallback can verify/correct them.
+    #
+    # The high threshold preserves ordinary expensive products while
+    # catching obvious OCR concatenation such as 50437350.
+    if best.value is not None and float(best.value) >= 1_000_000:
+        confidence = "low"
+
     return FieldResult("MRP", best.value, confidence, best.raw_evidence,
                         [c.to_dict() for c in candidates], ambiguous=ambiguous)
 
@@ -1004,7 +1014,16 @@ def _cross_field_boundaries(text: str) -> List[int]:
     """Boundary set used by the Aug 27 extended fields."""
     all_positive = (MRP_LABELS + NET_QTY_LABELS + MANUFACTURER_LABELS +
                      MFG_DATE_LABELS + EXPIRY_LABELS + CONSUMER_CARE_LABELS)
-    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE
+    # Contact/query phrases are hard boundaries for free-text manufacturer
+    # extraction too. Otherwise text such as "for customer queries" can be
+    # swallowed into the preceding manufacturer address.
+    all_negative = MRP_NEGATIVE + NET_QTY_NEGATIVE + [
+        r"\bfor\s+customer\s+queries\b",
+        r"\bfor\s+consumer\s+queries\b",
+        r"\bfor\s+queries\b",
+        r"\bcustomer\s+queries\b",
+        r"\bconsumer\s+queries\b",
+    ]
     return _boundaries(text, all_positive, all_negative)
 
 
@@ -1070,8 +1089,13 @@ def extract_manufacturer_candidates(text: str) -> List[Candidate]:
                 continue  # no letters at all -> not a plausible company/address
 
             # deterministic two-tier confidence: a very short fragment is
-            # kept but treated as low-confidence rather than discarded
+            # kept but treated as low-confidence rather than discarded.
             score = 0.95 if len(value_text) >= 8 else 0.6
+
+            # When several company-related labels are present, prefer the
+            # label that most directly identifies the manufacturer. This
+            # avoids letting a "Marketed by"/"Packed by" block beat a true
+            # "Manufactured by" block merely because it appeared first.
 
             candidates.append(Candidate(
                 field="MANUFACTURER_ADDRESS", value=value_text,
@@ -1133,7 +1157,7 @@ _MONTH_NAMES = {
 _DATE_DMY4_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})\b")
 _DATE_YMD_RE = re.compile(r"\b(\d{4})[./\-](\d{1,2})[./\-](\d{1,2})\b")
 _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
-_DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})[,\s]+(\d{2,4})\b")
+_DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})[\s./-]+([A-Za-z]{3,9})[,\s./-]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
 # Shrink search window to prevent jumping lines/labels in cramped layouts
@@ -1266,7 +1290,22 @@ def resolve_manufacturing_date(text: str, tokens: Optional[List[Dict[str, Any]]]
     text = text or ""
     norm, char_map = _normalize_text_with_map(text)
     candidates = extract_mfg_date_candidates(norm)
-    return _finalize_extended("MANUFACTURING_DATE", candidates, tokens, char_map, len(text))
+    result = _finalize_extended(
+        "MANUFACTURING_DATE", candidates, tokens, char_map, len(text)
+    )
+
+    # A manufacturing date cannot reasonably be in the future. Keep the
+    # OCR-derived value for provenance/debugging, but downgrade confidence
+    # so the LLM fallback can verify or correct an obviously bad date.
+    if result.value:
+        try:
+            parsed = datetime.date.fromisoformat(str(result.value))
+            if parsed > datetime.date.today():
+                result.confidence = "low"
+        except (ValueError, TypeError):
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1282,7 +1321,8 @@ CONSUMER_CARE_LABELS = [
     (r"\bCustomer\s*Care\s*Number\b", "Customer Care Number"),
     (r"\bCustomer\s*Care\b", "Customer Care"),
     (r"\bCustomer\s*Support\b", "Customer Support"),
-    (r"\bContact\s*Us\b", "Contact Us"), (r"\bContact\s*Details\b", "Contact Details"),
+    (r"\bContact[\s._-]+Us\b", "Contact Us"),
+    (r"\bContact[\s._-]+Details\b", "Contact Details"),
     (r"\bConsumer\s*Relations\b", "Consumer Relations"),
     (r"\bContact\s*Consumer\s*Relations\b", "Contact Consumer Relations"),
     (r"\bFeedback\b", "Feedback"), (r"\bComplaints\b", "Complaints"),
@@ -1335,10 +1375,20 @@ def extract_consumer_care_candidates(text: str) -> List[Candidate]:
             if email:
                 reason_codes.append("EMAIL_MATCH")
 
+            # A partial contact record is useful, but it is not complete.
+            # Keep phone-only/email-only values for deterministic extraction,
+            # while lowering confidence so the LLM fallback can enrich the
+            # missing half of the consumer-care field.
+            score = 0.95 if phone and email else 0.6
+            if phone and not email:
+                reasons.append("phone found but email missing -> partial contact, low confidence")
+            elif email and not phone:
+                reasons.append("email found but phone missing -> partial contact, low confidence")
+
             candidates.append(Candidate(
                 field="CONSUMER_CARE", value={"phone": phone, "email": email},
                 raw_evidence=text[lm.start():abs_end],
-                label_matched=label_name, score=0.9,
+                label_matched=label_name, score=score,
                 start=lm.start(), end=abs_end,
                 reasons=reasons, reason_codes=reason_codes,
                 suppressed=False,
