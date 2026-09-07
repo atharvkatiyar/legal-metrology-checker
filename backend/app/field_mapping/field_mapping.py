@@ -1160,6 +1160,12 @@ _DATE_DMY2_RE = re.compile(r"\b(\d{1,2})[./\-](\d{1,2})[./\-](\d{2})\b")
 _DATE_DMON_Y_RE = re.compile(r"\b(\d{1,2})[\s./-]+([A-Za-z]{3,9})[,\s./-]+(\d{2,4})\b")
 _DATE_MY_RE = re.compile(r"\b(\d{1,2})[./\-](\d{4})\b")
 
+# Common packaged-goods format: manufacturing month/year followed by
+# expiry month/year, e.g. "09/25-10/27". The first date is manufacturing.
+_DATE_MFG_EXP_RANGE_RE = re.compile(
+    r"\b(\d{1,2})[./\-](\d{2,4})\s*[\-–—]\s*(\d{1,2})[./\-](\d{2,4})\b"
+)
+
 # Shrink search window to prevent jumping lines/labels in cramped layouts
 MFG_DATE_WINDOW = 35
 
@@ -1187,6 +1193,16 @@ def _normalize_date(kind: str, groups) -> Optional[str]:
             y = int(groups[2])
             if y < 100:
                 y += 2000
+        elif kind == "mfg_exp_range":
+            mo = int(groups[0])
+            y = int(groups[1])
+            if y < 100:
+                y += 2000
+            if not 1 <= mo <= 12:
+                return None
+            if not 2000 <= y <= 2099:
+                return None
+            return f"{y:04d}-{mo:02d}"
         elif kind == "my4":
             mo = int(groups[0])
             y = int(groups[1])
@@ -1208,26 +1224,52 @@ def _normalize_date(kind: str, groups) -> Optional[str]:
 
 
 def _find_date_candidates_in_window(window_text: str):
-    """Returns list of (start, end, kind, groups) sorted by start position,
-    de-duplicating so a 4-digit-year match's first-two-digits never also
-    gets picked up as a spurious separate 2-digit-year match."""
+    """Returns list of (start, end, kind, groups) sorted by start position.
+
+    MFG-EXP ranges are treated as atomic candidates so the first
+    month/year is not stolen by a nested standalone-date match.
+    """
     found = []
+    protected_ranges = []
+
+    # First detect complete manufacturing-expiry ranges.
+    for m in _DATE_MFG_EXP_RANGE_RE.finditer(window_text):
+        found.append((m.start(), m.end(), "mfg_exp_range", m.groups()))
+        protected_ranges.append((m.start(), m.end()))
+
+    def inside_protected(start_pos: int, end_pos: int) -> bool:
+        return any(
+            ps <= start_pos and end_pos <= pe
+            for ps, pe in protected_ranges
+        )
+
     for m in _DATE_DMY4_RE.finditer(window_text):
-        found.append((m.start(), m.end(), "dmy4", m.groups()))
+        if not inside_protected(m.start(), m.end()):
+            found.append((m.start(), m.end(), "dmy4", m.groups()))
+
     for m in _DATE_YMD_RE.finditer(window_text):
-        found.append((m.start(), m.end(), "ymd", m.groups()))
+        if not inside_protected(m.start(), m.end()):
+            found.append((m.start(), m.end(), "ymd", m.groups()))
+
     for m in _DATE_DMON_Y_RE.finditer(window_text):
         mon_key = m.group(2)[:3].lower()
-        if mon_key in _MONTH_NAMES:
+        if mon_key in _MONTH_NAMES and not inside_protected(m.start(), m.end()):
             found.append((m.start(), m.end(), "dmonY", m.groups()))
+
     for m in _DATE_DMY2_RE.finditer(window_text):
+        if inside_protected(m.start(), m.end()):
+            continue
         if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
             continue
         found.append((m.start(), m.end(), "dmy2", m.groups()))
+
     for m in _DATE_MY_RE.finditer(window_text):
+        if inside_protected(m.start(), m.end()):
+            continue
         if any(f[0] <= m.start() and m.end() <= f[1] for f in found):
             continue
         found.append((m.start(), m.end(), "my4", m.groups()))
+
     found.sort(key=lambda f: f[0])
     return found
 
@@ -1335,7 +1377,14 @@ _PHONE_RE = re.compile(
     r"|\b\d{3,5}[-\s]\d{6,8}\b"            # 022-12345678 (STD code + number)
     r"|\b\d{2,5}(?:[-\s]\d{2,5}){1,3}\b"   # 1800-123-4567 (toll-free, multi-hyphen)
 )
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_EMAIL_RE = re.compile(
+    r"\b[\w.+-]+\s*@\s*[\w-]+(?:\s*\.\s*[\w.-]+)+\b"
+)
+
+def _normalize_email(email: Optional[str]) -> Optional[str]:
+    if not email:
+        return None
+    return re.sub(r"\s+", "", email)
 
 CONSUMER_CARE_WINDOW = 180
 
@@ -1357,7 +1406,7 @@ def extract_consumer_care_candidates(text: str) -> List[Candidate]:
             phone_m = _PHONE_RE.search(window_text)
             email_m = _EMAIL_RE.search(window_text)
             phone = phone_m.group(0) if phone_m else None
-            email = email_m.group(0) if email_m else None
+            email = _normalize_email(email_m.group(0)) if email_m else None
 
             if phone is None and email is None:
                 continue  # no meaningful contact info found -> skip, not a candidate

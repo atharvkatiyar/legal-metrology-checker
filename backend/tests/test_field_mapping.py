@@ -634,6 +634,22 @@ r = resolve_manufacturing_date("Packing Date 01/06/2026")
 check("Mfg Date: 'Packing Date' label", r.value == "2026-06-01", f"got {r.value}")
 
 r = resolve_manufacturing_date("Mfg Date 15 Jun 2026")
+r = resolve_manufacturing_date("MFG Date: 09/25-10/27")
+check("Mfg Date: manufacturing-expiry month/year range",
+      r.value == "2025-09",
+      f"got {r.value}")
+
+r = resolve_manufacturing_date("MFG Date: 09/25-10/27")
+check("Mfg Date: manufacturing-expiry range 2-digit years",
+      r.value == "2025-09",
+      f"got {r.value}")
+
+r = resolve_manufacturing_date("MFG Date: 12/2025-09/2026")
+check("Mfg Date: manufacturing-expiry range 4-digit years",
+      r.value == "2025-12",
+      f"got {r.value}")
+
+r = resolve_manufacturing_date("Mfg Date: 15 Jun 26")
 check("Mfg Date: month-name format", r.value == "2026-06-15", f"got {r.value}")
 
 r = resolve_manufacturing_date("Mfg Date 01/06/26")
@@ -703,6 +719,22 @@ check("Consumer Care: 'Contact Details' label", r.value == {"phone": None, "emai
 r = resolve_consumer_care("Consumer Care: 9876543210, care@abcfoods.com")
 check("Consumer Care: both phone and email captured",
       r.value == {"phone": "9876543210", "email": "care@abcfoods.com"}, f"got {r.value}")
+
+r = resolve_consumer_care("Consumer Care: 9876543210, care @ abcfoods.com")
+check("Consumer Care: OCR whitespace around @ recovered",
+      r.value == {"phone": "9876543210", "email": "care@abcfoods.com"},
+      f"got {r.value}")
+
+r = resolve_consumer_care("Consumer Care: care@abc . foods.com")
+check("Consumer Care: OCR whitespace around dot recovered",
+      r.value == {"phone": None, "email": "care@abc.foods.com"},
+      f"got {r.value}")
+
+r = resolve_consumer_care("Consumer Care: care @ abc . foods.com")
+check("Consumer Care: OCR whitespace around @ and dots recovered",
+      r.value == {"phone": None, "email": "care@abc.foods.com"},
+      f"got {r.value}")
+
 
 r = resolve_consumer_care("call 9876543210 for more info")
 check("Consumer Care: unrelated phone with no label -> rejected", r.value is None, f"got {r.value}")
